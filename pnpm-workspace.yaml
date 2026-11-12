@@ -1,0 +1,8 @@
+packages:
+  - packages/*
+  - apps/*
+allowBuilds:
+  browser-tabs-lock: false
+  esbuild: true
+minimumReleaseAgeExclude:
+  - near-api-js@7.5.1

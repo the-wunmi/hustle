@@ -1,0 +1,120 @@
+{
+  "budget": {
+    "model": "z-ai/glm-5.3-flash",
+    "jsonSchemaHonoured": true,
+    "promptTokens": 55,
+    "completionTokens": 81,
+    "reasoningTokens": 38,
+    "costNanoUsd": "44900",
+    "expectedNanoUsd": "44900",
+    "verification": {
+      "passed": true,
+      "checks": [
+        {
+          "name": "Signed text matches this request and response",
+          "ok": true,
+          "detail": "model:sha256(request):sha256(response)"
+        },
+        {
+          "name": "Signature recovers to the stated signer",
+          "ok": true,
+          "detail": "0x3b753b4406613c5e70ae640508632b600424fa0c"
+        },
+        {
+          "name": "Signer is the one model key in our pre-fetched report",
+          "ok": true,
+          "detail": "1 matching attestation(s)"
+        },
+        {
+          "name": "Report says it was made for our nonce",
+          "ok": true,
+          "detail": "nonce 9fbb1e9a065e…"
+        },
+        {
+          "name": "Report data names the signing key",
+          "ok": true,
+          "detail": "report_data[0:20] = signing address"
+        }
+      ]
+    }
+  },
+  "standard": {
+    "model": "Qwen/Qwen3.8-27B",
+    "jsonSchemaHonoured": true,
+    "promptTokens": 60,
+    "completionTokens": 44,
+    "reasoningTokens": 0,
+    "costNanoUsd": "61800",
+    "expectedNanoUsd": "61800",
+    "verification": {
+      "passed": true,
+      "checks": [
+        {
+          "name": "Signed text matches this request and response",
+          "ok": true,
+          "detail": "model:sha256(request):sha256(response)"
+        },
+        {
+          "name": "Signature recovers to the stated signer",
+          "ok": true,
+          "detail": "0x835ab53d20294ef795906dff21ae4c045336aa26"
+        },
+        {
+          "name": "Signer is the one model key in our pre-fetched report",
+          "ok": true,
+          "detail": "1 matching attestation(s)"
+        },
+        {
+          "name": "Report says it was made for our nonce",
+          "ok": true,
+          "detail": "nonce a7a08a70fc38…"
+        },
+        {
+          "name": "Report data names the signing key",
+          "ok": true,
+          "detail": "report_data[0:20] = signing address"
+        }
+      ]
+    }
+  },
+  "premium": {
+    "model": "moonshotai/kimi-k3",
+    "jsonSchemaHonoured": true,
+    "promptTokens": 166,
+    "completionTokens": 44,
+    "reasoningTokens": 0,
+    "costNanoUsd": "1273800",
+    "expectedNanoUsd": "1273800",
+    "verification": {
+      "passed": true,
+      "checks": [
+        {
+          "name": "Signed text matches this request and response",
+          "ok": true,
+          "detail": "sha256(request):sha256(response)"
+        },
+        {
+          "name": "Signature recovers to the stated signer",
+          "ok": true,
+          "detail": "0xb98a789cdc4817275f5155593ba73ef2a957e779"
+        },
+        {
+          "name": "Signer is the gateway key in our pre-fetched report",
+          "ok": true,
+          "detail": "1 matching attestation(s)"
+        },
+        {
+          "name": "Report says it was made for our nonce",
+          "ok": true,
+          "detail": "nonce 986f527916b1…"
+        },
+        {
+          "name": "Report data names the signing key",
+          "ok": true,
+          "detail": "report_data[0:20] = signing address"
+        }
+      ]
+    }
+  },
+  "totalCostUsd": 0.0013805
+}

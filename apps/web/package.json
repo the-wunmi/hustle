@@ -1,0 +1,28 @@
+{
+  "name": "@hustle/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p ${WEB_PORT:-3300}",
+    "build": "next build",
+    "start": "next start -p ${WEB_PORT:-3300}",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@auth0/auth0-spa-js": "2.24.0",
+    "@hustle/core": "workspace:*",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "swr": "^2.4.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.5",
+    "@types/node": "^24",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "tailwindcss": "4.3.5",
+    "typescript": "^7.0.2"
+  }
+}

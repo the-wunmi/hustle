@@ -1,0 +1,31 @@
+# Dependencies and build output
+node_modules
+dist
+.next
+.turbo
+coverage
+next-env.d.ts
+*.tsbuildinfo
+contracts/target
+# contracts/out is kept on purpose: prebuilt wasm, so a fresh clone runs without Rust.
+
+# Secrets: only .env.example is ever committed
+.env
+.env.*
+!.env.example
+
+# Local state
+.near-sandbox
+*.log
+
+# Test and review output
+test-results
+playwright-report
+docs/screenshots/review/
+docs/demo/raw/
+
+# OS and editor files
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json

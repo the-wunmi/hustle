@@ -1,0 +1,11 @@
+{
+  "status": 200,
+  "body": {
+    "requests": [
+      {
+        "requestId": "c259e2d6-c394-56b1-bf99-7d390c15bb18",
+        "costNanoUsd": 44900
+      }
+    ]
+  }
+}

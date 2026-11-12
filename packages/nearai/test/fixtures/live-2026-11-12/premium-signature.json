@@ -1,0 +1,7 @@
+{
+  "text": "41ba4e024e8d7688cb21cec9dbfbd1e06bfa3afccf1dda254fa04c3be276dff9:49905790f08d3ea045b65ca3975a9396053d79686679067dc1b7c8708fd7e764",
+  "signature": "0x69e9f1c4e5b14dc41993259602ebbd0ce6dfc8855f6e82aac29872a158074b8a2f48a5479ff0355d8baead6076f2425cbeaf3bb4d6d54416e3f3fccce27534681b",
+  "signing_address": "0xb98a789cdc4817275f5155593ba73ef2a957e779",
+  "signing_algo": "ecdsa",
+  "signature_kind": "gateway"
+}

@@ -1,0 +1,2 @@
+/target
+# /out (the prebuilt wasm) is kept on purpose: a fresh clone and the API image run without Rust.

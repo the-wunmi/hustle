@@ -1,0 +1,105 @@
+# Postgres, plus the API and web app under the `app` profile.
+#   Development: pnpm db:up                                       (Postgres only; run the apps with pnpm dev)
+#   Server:      docker compose --profile app up -d --build --wait  (everything)
+# Settings and secrets come from .env (Compose reads it from this directory); nothing secret lives in
+# this file. POSTGRES_PASSWORD is applied only when the volume is first created: to change it later,
+# run ALTER ROLE inside the database as well.
+name: hustle
+
+x-hardening: &hardening
+  restart: unless-stopped
+  init: true
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "5"
+
+services:
+  postgres:
+    # Pinned to a digest so a rebuilt tag cannot change what runs. Bump deliberately.
+    image: postgres:17.11-alpine@sha256:e5d2edd28b1f8d40a0a6c0c9cdc545b19b56a0d5d88f94bc11a97d970d4700d0
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hustle
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: hustle
+    ports:
+      # Loopback only, for pnpm dev on the host; the app containers use the Compose network.
+      - "127.0.0.1:5436:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 128mb
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hustle -d hustle"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  # The API and its world loop are one process, and there must be exactly one: world ticks and
+  # player actions share an in-process serial lane. Never scale this service.
+  api:
+    <<: *hardening
+    profiles: [app]
+    build:
+      context: .
+      target: api
+    image: hustle-api
+    # The testnet key, HUSTLE_SECRET and NEARAI_API_KEY reach only this container.
+    env_file: .env
+    environment:
+      # Inside the Compose network the database is postgres:5432, whatever .env says for pnpm dev.
+      DATABASE_URL: postgres://hustle:${POSTGRES_PASSWORD}@postgres:5432/hustle
+      DBOS_SYSTEM_DATABASE_URL: postgres://hustle:${POSTGRES_PASSWORD}@postgres:5432/hustle_dbos
+      # No local NEAR node on a server.
+      CHAIN_MODE: ${CHAIN_MODE:-testnet}
+      NODE_ENV: production
+      # The public URL (from .env): writes from other origins are refused, the cookie is Secure.
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+      PORT: "4300"
+    tmpfs:
+      - /tmp
+    ports:
+      # For the reverse proxy's /api routes. Loopback only.
+      - "127.0.0.1:4300:4300"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Time to stop taking requests, let DBOS checkpoint running workflows and close the pools.
+    stop_grace_period: 45s
+
+  web:
+    <<: *hardening
+    profiles: [app]
+    build:
+      context: .
+      target: web
+    image: hustle-web
+    # Nothing secret: the web server only proxies /api to the API.
+    environment:
+      HUSTLE_API_ORIGIN: http://api:4300
+    tmpfs:
+      - /app/apps/web/.next/cache
+      - /tmp
+    ports:
+      # For the reverse proxy. Loopback only.
+      - "127.0.0.1:3300:3300"
+    depends_on:
+      api:
+        condition: service_healthy
+    stop_grace_period: 15s
+
+volumes:
+  pgdata:

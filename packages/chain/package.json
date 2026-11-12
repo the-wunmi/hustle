@@ -1,0 +1,23 @@
+{
+  "name": "@hustle/chain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./conformance": "./src/conformance.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "dev": "tsx --env-file-if-exists=../../.env scripts/node.ts"
+  },
+  "dependencies": {
+    "@hustle/core": "workspace:*",
+    "@hustle/db": "workspace:*",
+    "drizzle-orm": "^0.45.4",
+    "near-api-js": "^7.5.1",
+    "near-sandbox": "^0.3.5",
+    "vitest": "^5.0.5"
+  }
+}
