@@ -176,11 +176,17 @@ export function createApp(engine: Engine) {
     SIGN_UP_WINDOW_MS,
     'Too many sign-ins from here. Try again later.',
   );
-  const clientKey = (c: Context) =>
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
-    (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket
-      ?.remoteAddress ??
-    'local';
+  // X-Forwarded-For is trusted only behind our reverse proxy (PUBLIC_ORIGIN set): the API port is
+  // bound to loopback there and Caddy overwrites the header. Without a proxy any client could set it.
+  const behindProxy = Boolean(process.env.PUBLIC_ORIGIN);
+  const clientKey = (c: Context) => {
+    const socket = (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)
+      ?.incoming?.socket?.remoteAddress;
+    const forwarded = behindProxy
+      ? c.req.header('x-forwarded-for')?.split(',').at(-1)?.trim()
+      : undefined;
+    return forwarded || socket || 'local';
+  };
   app.post('/auth/email/start', async (c) => {
     signUps.take(`email:${clientKey(c)}`);
     const input = await body(c);
@@ -211,6 +217,7 @@ export function createApp(engine: Engine) {
     return send(c, { player: { id: player.id, name: player.name } });
   });
   app.post('/auth/id-token', async (c) => {
+    signUps.take(`idtoken:${clientKey(c)}`);
     const { player, sessionToken } = await lane(async () =>
       loginWithIdToken(engine, (await body(c)) as never),
     );
