@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mintAgent, setFrozen, updateRulebook } from '../src/agents/manage.ts';
 import { redactUrls } from '../src/context.ts';
+import { walletParent } from '../src/guards.ts';
 import { ensurePlayerAccount } from '../src/players.ts';
 import { type World, world } from './harness.ts';
 
@@ -90,5 +91,29 @@ describe('guards on what costs the game NEAR', () => {
     expect(redactUrls('{"error":"fetch https://rpc.example/v1?apiKey=SECRET failed"}')).toBe(
       '{"error":"fetch https://rpc.example/v1?[redacted] failed"}',
     );
+  });
+
+  const walletPlayer = async (account: string) => {
+    const p = await w.signIn(`${account}@example.com`, account.slice(0, 20).replace(/\./g, ' '));
+    const [row] = await w.engine.db
+      .update(players)
+      .set({ walletAccountId: account })
+      .where(eq(players.id, p.id))
+      .returning();
+    return row!;
+  };
+
+  it('stops a fourth sub-account of one parent today; other wallets still get in', async () => {
+    // A roomy global cap, so only the per-parent limit is in play.
+    w.engine.dailyCaps = { accounts: 100, mints: 100 };
+    for (const n of [1, 2, 3])
+      await ensurePlayerAccount(w.engine, await walletPlayer(`a${n}.farm.testnet`));
+    await expect(
+      ensurePlayerAccount(w.engine, await walletPlayer('a4.farm.testnet')),
+    ).rejects.toMatchObject({ code: 'rate_limited' });
+    await ensurePlayerAccount(w.engine, await walletPlayer('real-player.testnet'));
+    expect(walletParent('a1.farm.testnet')).toBe('farm.testnet');
+    expect(walletParent('alice.testnet')).toBeNull();
+    expect(walletParent('b'.repeat(64))).toBeNull();
   });
 });

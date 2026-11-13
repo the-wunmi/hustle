@@ -60,6 +60,12 @@ async function signIn(email: string): Promise<string> {
 }
 
 describe('API', () => {
+  it('health answers at once and says whether recovered work is still running', async () => {
+    const res = await app.request('/api/health');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, recovering: false });
+  });
+
   it('serves the world without signing in', async () => {
     const res = await app.request('/api/world');
     expect(res.status).toBe(200);

@@ -14,6 +14,7 @@ import {
   SignedTransaction,
 } from 'near-api-js';
 import { PacedRpcProvider, type RpcStats } from './rpc.ts';
+import { SignerQueue } from './signer-queue.ts';
 import {
   type BadgeType,
   ChainError,
@@ -75,12 +76,16 @@ interface Funding {
   contractState: bigint;
   /** The operator pays every agent's mint deposit (about 2 NEAR each, less with global wallet code) and most of the gas. */
   operator: bigint;
-  /** Players and house accounts: their own gas and account storage. */
+  /** Players and house accounts: their own gas and account storage when created. */
   account: bigint;
-  /** A player or house account holding less than this is refilled by the root before it signs. */
+  /** A player account holding less than this (or one call's gas, if more) is refilled by the root before it signs. */
   accountLow: bigint;
-  /** What such a refill sends. */
+  /** A refill raises a player to this much above that floor. */
   accountRefill: bigint;
+  /** The game's own signers (clients, sponsors, house players) are kept at least this… */
+  houseLow: bigint;
+  /** …by topping them up to this, with no daily cap. */
+  houseTarget: bigint;
   /** Accounts that only receive (the treasury, vendors): storage for the account and its key. */
   payee: bigint;
   /** A parent such as `vendors.<root>` is refilled when it holds less than a child's funding plus this. */
@@ -107,6 +112,8 @@ const FUNDING: Record<NearNetwork, Funding> = {
     account: 10n * NEAR,
     accountLow: 0n,
     accountRefill: 0n,
+    houseLow: 0n,
+    houseTarget: 0n,
     payee: 10n * NEAR,
     parentHeadroom: NEAR,
     parentRefill: 10n * NEAR,
@@ -124,6 +131,9 @@ const FUNDING: Record<NearNetwork, Funding> = {
     account: NEAR / 20n,
     accountLow: NEAR / 25n,
     accountRefill: (3n * NEAR) / 100n,
+    // A job post from `clients` needs ~0.15 NEAR of headroom until its prepaid gas comes back.
+    houseLow: (3n * NEAR) / 10n,
+    houseTarget: (6n * NEAR) / 10n,
     payee: NEAR / 20n,
     parentHeadroom: NEAR / 20n,
     parentRefill: NEAR / 10n,
@@ -382,15 +392,27 @@ export class NearChain implements ChainGateway {
     return account;
   }
 
+  private readonly signers = new SignerQueue();
+
+  /** Every transaction goes through here: one in flight per signer (`SignerQueue`). */
+  private send(
+    signerId: string,
+    receiverId: string,
+    txActions: Action[],
+    record: { method: string; args: unknown; key: string | null; dedupe?: boolean },
+  ): Promise<SentTx> {
+    return this.signers.run(signerId, () => this.sendNow(signerId, receiverId, txActions, record));
+  }
+
   /**
-   * Signs and sends one transaction. A keyed call is once per key: a key whose call already
+   * Signs and sends one transaction (the work behind `send`). A keyed call is once per key: a key whose call already
    * succeeded returns that call's result and sends nothing, and the signed transaction is noted
    * (hash and bytes) before it is broadcast, so a process that dies before the answer leaves the
    * call in doubt rather than lost. The next call with that key asks the node about that hash and,
    * if the node never saw it, broadcasts the same signed bytes again (the nonce makes them land at
    * most once). A wallet spend opts out (`dedupe: false`): the wallet keeps its own keys.
    */
-  private async send(
+  private async sendNow(
     signerId: string,
     receiverId: string,
     txActions: Action[],
@@ -666,23 +688,61 @@ export class NearChain implements ChainGateway {
       return;
     if (!signerId.endsWith(`.${this.ids.root}`)) return;
     const { amount } = await this.provider.viewAccount({ accountId: signerId });
-    if (amount >= this.funding.accountLow) return;
-    // At most `refillCapPerDay` a signer per UTC day: each refill is keyed by signer, day and number,
-    // so the count lives in the tx log and survives restarts. Past it the signer waits for tomorrow
-    // (its transaction fails for want of gas), so a player looping owner actions can't drain the root.
+    // Whatever the floor, a signer must cover one full-gas call at today's gas price.
+    const oneCall = (await this.gasPrice()) * GAS_MAX + NEAR / 100n;
+    if (!isPlayerAccount(signerId)) {
+      // The game's own signers: kept topped up, no daily cap.
+      const floor = maxBig(this.funding.houseLow, 2n * oneCall);
+      if (amount >= floor) return;
+      const top = maxBig(this.funding.houseTarget, floor + oneCall) - amount;
+      const root = await this.provider.viewAccount({ accountId: this.ids.root });
+      if (root.amount < top + NEAR) {
+        if (!this.warnedRootLow) {
+          this.warnedRootLow = true;
+          console.warn(
+            JSON.stringify({ message: 'root too low to refill a house signer', signer: signerId }),
+          );
+        }
+        return;
+      }
+      await this.send(this.ids.root, signerId, [actions.transfer(top)], {
+        method: 'transfer',
+        args: { amount: top.toString() },
+        key: null,
+      });
+      return;
+    }
+    const floor = maxBig(this.funding.accountLow, oneCall);
+    if (amount >= floor) return;
+    // Players: at most `refillCapPerDay / accountRefill` refills per UTC day, each keyed by signer,
+    // day and number so the count lives in the tx log and survives restarts. Past it the signer
+    // waits for tomorrow, so a player looping owner actions can't drain the root.
+    const top = floor + this.funding.accountRefill - amount;
     const cap = this.opts.refillCapPerDay ?? 10n ** 23n;
     const most = Number(cap / this.funding.accountRefill);
     const day = new Date().toISOString().slice(0, 10);
     for (let n = 1; n <= most; n++) {
       const key = `refill:${signerId}:${day}:${n}`;
       if (await this.settledByKey(key)) continue;
-      await this.send(this.ids.root, signerId, [actions.transfer(this.funding.accountRefill)], {
+      await this.send(this.ids.root, signerId, [actions.transfer(top)], {
         method: 'transfer',
-        args: { amount: this.funding.accountRefill.toString() },
+        args: { amount: top.toString() },
         key,
       });
       return;
     }
+  }
+
+  private warnedRootLow = false;
+  private gasPriceCache: { at: number; price: bigint } | null = null;
+
+  /** Yocto per gas now, read at most once a minute. */
+  private async gasPrice(): Promise<bigint> {
+    if (this.gasPriceCache && Date.now() - this.gasPriceCache.at < 60_000)
+      return this.gasPriceCache.price;
+    const price = BigInt((await this.provider.viewGasPrice()).gas_price);
+    this.gasPriceCache = { at: Date.now(), price };
+    return price;
   }
 
   /** How many refills `signerId` has had today (tests and the reserve log read this). */
@@ -1802,3 +1862,10 @@ function toView(tx: IndexedTx): ChainTxView {
   const { key: _key, result: _result, ...view } = tx;
   return view;
 }
+
+/** Player accounts the game makes (`p-<hex>.<root>`); every other signer under the root is ours. */
+export function isPlayerAccount(accountId: string): boolean {
+  return /^p-[0-9a-f]+\./.test(accountId);
+}
+
+const maxBig = (a: bigint, b: bigint) => (a > b ? a : b);

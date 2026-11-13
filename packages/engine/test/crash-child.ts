@@ -25,6 +25,9 @@ const engine = await createEngine({
   },
   secret: 'test-crash',
 });
+// Finish whatever a killed process left before doing anything new (the server does the same, with a
+// time limit, before the world ticks).
+await engine.recovered;
 await seedWorld(engine);
 
 async function signUp(email: string, name: string) {

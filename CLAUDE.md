@@ -259,6 +259,17 @@ may reference it (code, README, tests, UI).
   Signed owner actions are rate-limited per player (20 per 5 min); a freeze, rulebook or listing
   that changes nothing sends no transaction. In production `/auth/wallet/*` needs an Origin header;
   the key lookup runs off the lane. Log lines drop URL query strings (`redactUrls`).
+- **Boot and sends after the 2026-11-13 incident** (45 resumed `post_job` workflows from `clients`
+  at once: NotEnoughBalance, then InvalidNonce storms, health red for 15 minutes). The API serves
+  `/api/health` (`{ok, tick, recovering}`) as soon as HTTP is up; resumed workflows finish in the
+  background (`engine.recovered`) and the world waits for them at most `RECOVERY_WAIT_MS` (60 s).
+  `NearChain.send` runs one transaction at a time per signer (`SignerQueue`), so a resume storm
+  queues instead of racing nonces and balance. House signers (`clients`, `sponsors`, house players)
+  are refilled to 0.6 NEAR whenever under 0.3 (or two full-gas calls at the current gas price), with
+  no daily cap, and a warning once if the root can't; the per-day refill cap applies to player
+  accounts (`p-…`) only. Wallet sub-accounts of one parent (`aN.someone.testnet`) get 3 new accounts
+  a day before touching the global cap (`walletParent`); top-level and implicit accounts can still
+  exhaust the global cap, which is accepted.
 - **Answering a call returns at once** (`answerCall`, `calls.ts`): the choice is claimed and stored
   with a pending outcome, and a `resolveCall` workflow keyed `<seed>:call:<id>` runs the effects (the
   live bid, a bond, escrow) on the lane. Not a single step: it may start child workflows; every

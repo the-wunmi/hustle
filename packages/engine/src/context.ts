@@ -78,6 +78,10 @@ export interface Engine {
    * game itself runs on: wallet sign-in proves a testnet account, so it always asks testnet.
    */
   walletKeys: (accountId: string, publicKey: string) => Promise<KeyPermission>;
+  /** True while workflows left by a previous process are still finishing. */
+  recovering: boolean;
+  /** Settles once they have (never rejects). */
+  recovered: Promise<void>;
   /** Most new on-chain player accounts and agent mints per UTC day (Infinity: no cap). */
   dailyCaps: { accounts: number; mints: number };
   /** Which of the game's NEAR accounts is below its reserve, if any (null: all fine). */
@@ -290,6 +294,8 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     auth,
     authSim,
     walletKeys: opts.walletKeys ?? testnetKeyLookup(env),
+    recovering: false,
+    recovered: Promise.resolve(),
     // On testnet NEAR is scarce: cap what costs it per day (DAILY_NEW_ACCOUNTS, DAILY_AGENT_MINTS).
     dailyCaps: opts.dailyCaps ?? {
       accounts: capFromEnv(env.DAILY_NEW_ACCOUNTS, chainMode === 'testnet' ? 30 : Infinity),

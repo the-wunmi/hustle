@@ -45,8 +45,10 @@ export function systemDatabaseUrl(env: NodeJS.ProcessEnv): string {
 }
 
 /**
- * Launches DBOS for this engine and waits for every workflow a previous process left unfinished,
- * so the world never ticks while recovered work is still running behind it.
+ * Launches DBOS for this engine. Workflows a previous process left unfinished resume in the
+ * background (`engine.recovered` settles when they have), so the API can answer health checks at
+ * once; the server waits on it, bounded, before the world ticks. Their chain calls go through the
+ * per-signer queue, so a resume storm sends one transaction per account at a time.
  */
 export async function launchDurable(engine: Engine, env: NodeJS.ProcessEnv): Promise<void> {
   if (current) throw new Error('DBOS is already launched in this process');
@@ -64,7 +66,12 @@ export async function launchDurable(engine: Engine, env: NodeJS.ProcessEnv): Pro
     logLevel: env.DBOS_LOG_LEVEL ?? (env.NODE_ENV === 'test' ? 'error' : 'warn'),
   });
   await DBOS.launch();
-  await finishRecovered(engine);
+  engine.recovering = true;
+  engine.recovered = finishRecovered(engine)
+    .catch((err) => engine.log('resuming workflows failed', { error: String(err) }))
+    .finally(() => {
+      engine.recovering = false;
+    });
 }
 
 export async function shutdownDurable(): Promise<void> {

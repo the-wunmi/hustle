@@ -10,6 +10,7 @@ export {
 export * from './pg-txlog.ts';
 export * from './relayer.ts';
 export * from './rpc.ts';
+export * from './signer-queue.ts';
 export * from './sim.ts';
 export * from './testnet.ts';
 export * from './types.ts';

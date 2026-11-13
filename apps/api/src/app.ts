@@ -294,7 +294,12 @@ export function createApp(engine: Engine) {
   });
 
   // ── World ─────────────────────────────────────────────────────────────────────────────────────
-  app.get('/health', (c) => send(c, { ok: true, tick: engine.clock.tick }));
+  // Liveness only: up as soon as HTTP is. `recovering` says workflows from the last process are
+  // still finishing (the world waits for them, a minute by default).
+  app.get('/health', (c) =>
+    send(c, { ok: true, tick: engine.clock.tick, recovering: engine.recovering }),
+  );
+
   app.get('/world', async (c) => send(c, await worldView(engine)));
   app.get('/me', async (c) => {
     const player = c.get('player');
