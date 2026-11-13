@@ -5,6 +5,7 @@ import type { ClientStyle, JobDraft, JobSnapshot } from '@hustle/economy';
 import { eq } from 'drizzle-orm';
 import { dayOf, type Engine } from '../context.ts';
 import { chainCall, crashPoint, DBOS, durableEngine, inTx, runOnce, wfId } from '../durable.ts';
+import { saveJobFile } from '../files.ts';
 import { post } from '../record.ts';
 
 export type JobRow = typeof jobs.$inferSelect;
@@ -59,6 +60,9 @@ type EscrowResult =
  * (`ft_transfer_call`). Practice jobs have no budget and never touch escrow. A paid job opens through
  * a workflow keyed by the job's id, so a crash anywhere in between resumes it.
  */
+/** A `next_at` the work stages never reach (the largest the column holds): for jobs worked elsewhere. */
+export const NEVER_TICK = 2_147_483_647;
+
 export async function openJob(
   engine: Engine,
   poster: Poster,
@@ -77,10 +81,12 @@ export async function openJob(
   }
   const jobId = randomUUID();
   const reviewTicks = engine.cfg.reviewTicks * (poster.playerId ? PLAYER_REVIEW_FACTOR : 1);
+  // File contents stay out of the workflow's stored input; they're saved once the job is open.
+  const { files: _files, ...escrowed } = draft;
   const input: EscrowInput = {
     jobId,
     poster,
-    draft,
+    draft: escrowed,
     opts,
     tick,
     day: dayOf(engine),
@@ -88,11 +94,23 @@ export async function openJob(
     reviewTicks,
   };
   const res = await runOnce(escrowWorkflow, wfId(engine, 'escrow', jobId), input);
-  if (res.kind === 'open') return res.job;
+  if (res.kind === 'open') return withWorkFiles(engine, res.job, draft);
   if (!poster.playerId) return null;
   if (res.reason === 'insufficient_funds')
     throw new DomainError('insufficient_funds', 'Could not escrow the budget');
   throw new DomainError('invalid', 'The job board refused the budget (minimum $0.10)');
+}
+
+/** Keeps an expert job's files (attached by the client) and its acceptance criteria. */
+async function withWorkFiles(engine: Engine, job: JobRow, draft: JobDraft): Promise<JobRow> {
+  for (const f of draft.files ?? []) await saveJobFile(engine, job.id, f.name, f.content, 'client');
+  if (!draft.criteria) return job;
+  const [row] = await engine.db
+    .update(jobs)
+    .set({ criteria: draft.criteria })
+    .where(eq(jobs.id, job.id))
+    .returning();
+  return row ?? job;
 }
 
 async function insertJob(
@@ -121,6 +139,7 @@ async function insertJob(
       scamVendor: draft.scamVendor,
       scamAmount: draft.scamAmount,
       answerKeywords: draft.answerKeywords ? [...draft.answerKeywords] : null,
+      subcontracting: draft.subcontracting ?? true,
       reservedForAgentId: opts.reservedForAgentId ?? null,
       autoAward: poster.autoAward,
       status: at.status,

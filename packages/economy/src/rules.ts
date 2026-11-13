@@ -15,6 +15,7 @@ import {
   type Trait,
 } from '@hustle/core';
 import type { Brain, EconomyConfig } from './config.ts';
+import type { ToolSpec } from './tools.ts';
 
 /** What the rules need to know about an agent. The live world and the simulation both build one. */
 export interface AgentSnapshot {
@@ -30,6 +31,8 @@ export interface AgentSnapshot {
   avgRating100: number | null;
   dormant: boolean;
   busy: boolean;
+  /** Tokens the owner's playbook and recalled memory add to each work call; 0 when none. */
+  contextTokens?: number;
 }
 
 /** What the rules need to know about a job. `scam` is the hidden truth; agents never read it. */
@@ -146,7 +149,7 @@ export function screenJobText(body: string): { flagged: boolean; phrases: string
 // ── Work and its cost ───────────────────────────────────────────────────────────────────────────
 
 export interface CallSpec {
-  purpose: 'bid' | 'plan' | 'draft' | 'review';
+  purpose: 'bid' | 'plan' | 'draft' | 'review' | 'reflect' | 'tool' | 'code' | 'act';
   inTokens: number;
   outTokens: number;
 }
@@ -166,6 +169,10 @@ const WORKLOAD: Record<Category, { plan: [number, number] | null; draft: [number
 };
 
 export const BID_CALL: CallSpec = { purpose: 'bid', inTokens: 1200, outTokens: 160 };
+/** After a job: the agent reads how it went and writes itself one lesson. */
+export const REFLECT_CALL: CallSpec = { purpose: 'reflect', inTokens: 1_000, outTokens: 90 };
+/** One turn of a live agent's loop: the brief, its files and its steps so far in; one action out. */
+export const ACT_CALL: CallSpec = { purpose: 'act', inTokens: 4_000, outTokens: 2_000 };
 
 /** Bigger jobs run longer: work scales with budget, from 1× under $0.50 up to 3×. */
 function sizeFactor(budget: Micro): number {
@@ -179,12 +186,26 @@ export function workCalls(agent: AgentSnapshot, job: JobSnapshot): CallSpec[] {
   const load = WORKLOAD[job.category];
   const k = job.source === 'practice' ? 0.5 : sizeFactor(job.budget);
   const scale = (n: number) => Math.round(n * k);
+  // The playbook and memory are read on every work call, whatever the job's size.
+  const extra = agent.contextTokens ?? 0;
   const calls: CallSpec[] = [];
   if (load.plan)
-    calls.push({ purpose: 'plan', inTokens: scale(load.plan[0]), outTokens: scale(load.plan[1]) });
-  calls.push({ purpose: 'draft', inTokens: scale(load.draft[0]), outTokens: scale(load.draft[1]) });
+    calls.push({
+      purpose: 'plan',
+      inTokens: scale(load.plan[0]) + extra,
+      outTokens: scale(load.plan[1]),
+    });
+  calls.push({
+    purpose: 'draft',
+    inTokens: scale(load.draft[0]) + extra,
+    outTokens: scale(load.draft[1]),
+  });
   if (has(agent, 'meticulous') || agent.strategy.tier === 'premium') {
-    calls.push({ purpose: 'review', inTokens: scale(load.draft[1] + 3000), outTokens: 600 });
+    calls.push({
+      purpose: 'review',
+      inTokens: scale(load.draft[1] + 3000) + extra,
+      outTokens: 600,
+    });
   }
   return calls;
 }
@@ -203,29 +224,32 @@ export function callCostMicro(brain: Brain, call: CallSpec): Micro {
   return (nano + 999n) / 1000n;
 }
 
-/** Tools the agent would buy for honest work, by vendor handle. Frugal agents skip optional ones. */
+/** Tools the agent would use for this job. Frugal agents skip optional ones except for research. */
 export function toolsFor(
   agent: AgentSnapshot,
   job: JobSnapshot,
-  vendors: readonly {
-    handle: string;
-    helps: readonly Category[];
-    scam: boolean;
-    specialist?: boolean;
-    price: Micro;
-  }[],
-): { handle: string; price: Micro }[] {
+  tools: readonly ToolSpec[],
+): readonly ToolSpec[] {
   if (job.source === 'practice') return [];
-  // Everyday tools only: a specialist is bought only for a job that needs one, on the owner's say.
-  const useful = vendors.filter((v) => !v.scam && !v.specialist && v.helps.includes(job.category));
-  if (useful.length === 0) return [];
-  if (has(agent, 'frugal') && job.category !== 'research') return [];
-  // One tool for ordinary jobs; research uses up to two.
-  return useful.slice(0, job.category === 'research' ? 2 : 1).map((v) => ({
-    handle: v.handle,
-    price: v.price,
-  }));
+  const frugal = has(agent, 'frugal') && job.category !== 'research';
+  return tools.filter(
+    (t) => t.helps.includes(job.category) && !(frugal && t.optional) && !t.needsInput,
+  );
 }
+
+/** One model call a tool makes (its prompt and results in, its notes or code out). */
+export const toolCall = (tool: ToolSpec): CallSpec => ({
+  purpose: 'tool',
+  inTokens: tool.inTokens,
+  outTokens: tool.outTokens,
+});
+
+/** One use of a tool: its fee plus the thinking that runs it. */
+export const toolCost = (tool: ToolSpec, brain: Brain): Micro =>
+  tool.fee * BigInt(tool.usesPerCall) +
+  callCostMicro(brain, toolCall(tool)) * BigInt(tool.modelCalls) +
+  // The draft then reads the tool's notes.
+  callCostMicro(brain, { purpose: 'draft', inTokens: tool.notesTokens, outTokens: 0 });
 
 /** Whether the agent hires a helper to proofread, if its rulebook lets it. */
 export function wantsHelper(agent: AgentSnapshot, job: JobSnapshot, rng: Rng): boolean {
@@ -239,11 +263,11 @@ export function expectedJobCost(
   agent: AgentSnapshot,
   job: JobSnapshot,
   brain: Brain,
-  vendors: Parameters<typeof toolsFor>[2],
+  tools: readonly ToolSpec[],
 ): Micro {
   let total = 0n;
   for (const call of workCalls(agent, job)) total += callCostMicro(brain, call);
-  for (const tool of toolsFor(agent, job, vendors)) total += tool.price;
+  for (const tool of toolsFor(agent, job, tools)) total += toolCost(tool, brain);
   return total;
 }
 
@@ -255,9 +279,9 @@ export function overJobCap(
   agent: AgentSnapshot,
   job: JobSnapshot,
   brain: Brain,
-  vendors: Parameters<typeof toolsFor>[2],
+  tools: readonly ToolSpec[],
 ): Micro | null {
-  const needs = expectedJobCost(agent, job, brain, vendors) + callCostMicro(brain, BID_CALL);
+  const needs = expectedJobCost(agent, job, brain, tools) + callCostMicro(brain, BID_CALL);
   return needs > agent.rulebook.maxPerJob ? needs : null;
 }
 
@@ -290,7 +314,7 @@ const PRICE_BPS: Record<Strategy['priceStyle'], number> = {
 export function decideBid(
   agent: AgentSnapshot,
   job: JobSnapshot,
-  ctx: { cfg: EconomyConfig; brain: Brain; vendors: Parameters<typeof toolsFor>[2]; rng: Rng },
+  ctx: { cfg: EconomyConfig; brain: Brain; tools: readonly ToolSpec[]; rng: Rng },
 ): BidDecision {
   if (agent.dormant) return { bid: false, reason: 'dormant' };
   if (agent.busy) return { bid: false, reason: 'busy' };
@@ -315,10 +339,10 @@ export function decideBid(
     return { bid: false, reason: 'screened' };
   }
 
-  const cost = expectedJobCost(agent, job, ctx.brain, ctx.vendors);
+  const cost = expectedJobCost(agent, job, ctx.brain, ctx.tools);
   if (agent.balance < cost + callCostMicro(ctx.brain, BID_CALL))
     return { bid: false, reason: 'funds' };
-  if (job.source !== 'practice' && overJobCap(agent, job, ctx.brain, ctx.vendors) !== null)
+  if (job.source !== 'practice' && overJobCap(agent, job, ctx.brain, ctx.tools) !== null)
     return { bid: false, reason: 'job_cap' };
 
   if (job.source === 'practice') return { bid: true, price: 0n };
@@ -353,7 +377,17 @@ export function qualityFor(
   agent: AgentSnapshot,
   job: JobSnapshot,
   tier: Tier,
-  extras: { tools: number; helper: boolean; specialist?: SpecialistUse; contract?: boolean },
+  extras: {
+    tools: number;
+    helper: boolean;
+    specialist?: SpecialistUse;
+    contract?: boolean;
+    /**
+     * Whether the agent could have used a tool on this job (false for an agent with no tool access,
+     * such as a house agent on the recorded brain): skipping research is only penalised when it could.
+     */
+    toolsAvailable?: boolean;
+  },
   cfg: EconomyConfig,
 ): number {
   let q = cfg.tierQuality[tier];
@@ -361,7 +395,8 @@ export function qualityFor(
   if (has(agent, 'meticulous')) q += 0.05;
   if (has(agent, 'fast_and_loose')) q -= 0.06;
   if (extras.helper) q += 0.05;
-  if (job.category === 'research' && extras.tools === 0) q -= 0.1;
+  if (job.category === 'research' && extras.tools === 0 && extras.toolsAvailable !== false)
+    q -= 0.1;
   if (extras.tools > 0) q += 0.02;
   if (extras.specialist === 'bought') q += cfg.specialistBoost;
   if (extras.specialist === 'missing') q -= cfg.specialistMissing;

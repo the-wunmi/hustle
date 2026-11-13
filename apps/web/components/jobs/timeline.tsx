@@ -26,6 +26,10 @@ const PURPOSE: Record<InferenceReceiptView['purpose'], string> = {
   plan: 'planned the work',
   draft: 'drafted the deliverable',
   review: 'reviewed the work',
+  reflect: 'wrote itself a lesson',
+  tool: 'used a tool',
+  code: 'wrote code for the sandbox',
+  act: 'chose its next step',
   diary: 'wrote a diary line',
   judge: 'checked the dispute',
 };
@@ -121,13 +125,39 @@ function ThinkingRow({ r }: { r: InferenceReceiptView }) {
   return (
     <>
       <p>
-        <span className="font-semibold">{r.agentName}</span> {PURPOSE[r.purpose]}:{' '}
-        <Money micro={r.cost} className="font-semibold text-bad" /> of thinking
+        <span className="font-semibold">{r.agentName}</span>{' '}
+        {r.tool ? `used ${r.tool.name}` : PURPOSE[r.purpose]}:{' '}
+        <Money micro={r.cost} className="font-semibold text-bad" />
+        {r.tool ? '' : ' of thinking'}
       </p>
       <p className="text-sm text-ink-2">
         {r.model} ({TIER_LABEL[r.tier]}), {r.promptTokens.toLocaleString()} tokens in,{' '}
         {r.completionTokens.toLocaleString()} out
+        {r.tool && r.tool.uses > 0
+          ? `, ${r.tool.uses} search${r.tool.uses === 1 ? '' : 'es'} at NEAR AI's listed price`
+          : ''}
       </p>
+      {r.tool && r.tool.sources.length > 0 && (
+        <details className="mt-1 text-sm">
+          <summary className="cursor-pointer text-ink-2">
+            {r.tool.sources.length} source{r.tool.sources.length === 1 ? '' : 's'} it read
+          </summary>
+          <ul className="mt-1 space-y-0.5">
+            {r.tool.sources.map((src) => (
+              <li key={src.url} className="truncate">
+                <a
+                  href={src.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="text-brand underline underline-offset-2"
+                >
+                  {src.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       <Verification r={r} />
     </>
   );
@@ -167,7 +197,8 @@ function SpendRow({ s }: { s: SpendView }) {
       <p>
         <span className="font-semibold">{s.agentName}</span>{' '}
         {s.status === 'pending' ? 'asked to pay' : s.status === 'failed' ? 'failed to pay' : 'paid'}{' '}
-        <Money micro={s.amount} className="font-semibold" /> for {SPEND_WHAT[s.kind]}:{' '}
+        <Money micro={s.amount} className="font-semibold" /> for{' '}
+        {s.memo?.startsWith('sandbox run') ? 'a sandbox run' : SPEND_WHAT[s.kind]}:{' '}
         {s.receiverLabel}
       </p>
       <p className="text-sm text-ink-2">
@@ -311,10 +342,17 @@ export function HowItRan({ job }: { job: JobView }) {
   const all = entriesOf(job);
   const money = all.filter((e) => e.type !== 'tx');
   const chain = all.filter((e) => e.type === 'tx');
-  const thinking = job.receipts.reduce((t, r) => t + BigInt(r.cost), 0n);
-  const tools = job.spends
-    .filter((s) => s.kind === 'tool' && s.status === 'settled')
-    .reduce((t, s) => t + BigInt(s.amount), 0n);
+  // A tool's own calls (a search, a coding turn) and its fees count as tools, not thinking.
+  const isToolCall = (r: (typeof job.receipts)[number]) => !!r.tool || r.purpose === 'code';
+  const thinking = job.receipts
+    .filter((r) => !isToolCall(r))
+    .reduce((t, r) => t + BigInt(r.cost), 0n);
+  const tools =
+    job.receipts.filter(isToolCall).reduce((t, r) => t + BigInt(r.cost), 0n) +
+    job.runs.reduce((t, r) => t + BigInt(r.cost), 0n) +
+    job.spends
+      .filter((s) => s.kind === 'tool' && s.status === 'settled')
+      .reduce((t, s) => t + BigInt(s.amount), 0n);
   const blocked = job.spends.filter((s) => s.status === 'blocked').length;
   const scripted = job.receipts.filter((r) => r.verification.mode === 'simulated').length;
 
@@ -330,7 +368,7 @@ export function HowItRan({ job }: { job: JobView }) {
           <dd className="font-display text-lg font-bold tnum">{fmt(thinking)}</dd>
         </div>
         <div className="rounded-xl bg-surface-2 p-3">
-          <dt className="text-xs text-muted">Tools bought</dt>
+          <dt className="text-xs text-muted">Tools used</dt>
           <dd className="font-display text-lg font-bold tnum">{fmt(tools)}</dd>
         </div>
         <div className={`rounded-xl p-3 ${blocked ? 'bg-shield-soft' : 'bg-surface-2'}`}>

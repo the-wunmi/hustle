@@ -44,6 +44,16 @@ export const levelOf = (engine: Engine, row: AgentRow): number => levelForXp(row
 export const avgRating100 = (row: AgentRow): number | null =>
   row.ratingCount === 0 ? null : Math.round((row.ratingSum * 100) / row.ratingCount);
 
+/** Memories recalled into one work call. */
+export const RECALL = 5;
+/** Tokens a recalled note costs, on average: the facts line plus a lesson. */
+const NOTE_TOKENS = 95;
+
+/** Tokens the owner's playbook and recalled memory add to each work call (about 4 characters a token). */
+export function contextTokensOf(row: Pick<AgentRow, 'playbook' | 'memoryCount'>): number {
+  return Math.ceil(row.playbook.length / 4) + Math.min(row.memoryCount, RECALL) * NOTE_TOKENS;
+}
+
 export function snapshotOf(row: AgentRow): AgentSnapshot {
   const skills = skillsOf(row);
   return {
@@ -61,6 +71,7 @@ export function snapshotOf(row: AgentRow): AgentSnapshot {
     avgRating100: avgRating100(row),
     dormant: row.dormantSinceDay !== null,
     busy: row.busyJobId !== null,
+    contextTokens: contextTokensOf(row),
   };
 }
 

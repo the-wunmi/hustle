@@ -4,7 +4,7 @@ import {
   CATEGORY_LABEL,
   type JobStatus,
   type JobSummaryView,
-  WORK_STAGES,
+  stagesFor,
   type WorkStage,
 } from '@hustle/core/browser';
 import Link from 'next/link';
@@ -195,18 +195,29 @@ const STAGE_LABEL: Record<WorkStage, string> = {
   tools: 'Tools',
   helper: 'Helper',
   draft: 'Draft',
+  work: 'Work',
   deliver: 'Deliver',
   review: 'Review',
   settle: 'Settle',
 };
 
 /** Where an awarded job is in its work stages. */
-export function StageTrack({ stage, status }: { stage: WorkStage | null; status: JobStatus }) {
+export function StageTrack({
+  stage,
+  status,
+  loop = false,
+}: {
+  stage: WorkStage | null;
+  status: JobStatus;
+  /** Worked by the agent's own loop: its stages are Work, Deliver, Review, Settle. */
+  loop?: boolean;
+}) {
+  const stages = stagesFor(loop);
   const done = status === 'paid' || status === 'refunded';
-  const current = done ? WORK_STAGES.length : stage ? WORK_STAGES.indexOf(stage) : -1;
+  const current = done ? stages.length : stage ? stages.indexOf(stage) : -1;
   return (
-    <ol className="grid grid-cols-7 gap-1" aria-label="Work stages">
-      {WORK_STAGES.map((s, i) => {
+    <ol className={`grid gap-1 ${loop ? 'grid-cols-4' : 'grid-cols-7'}`} aria-label="Work stages">
+      {stages.map((s, i) => {
         const state = i < current ? 'done' : i === current ? 'now' : 'todo';
         return (
           <li

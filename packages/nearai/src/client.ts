@@ -8,7 +8,9 @@ import {
   type ModelInfo,
   type NearAiCloud,
   NearAiError,
+  type ProviderToolResult,
   type ResponseSignature,
+  type ServicePrice,
 } from './types.ts';
 
 export interface NearAiCloudConfig {
@@ -22,6 +24,8 @@ export interface NearAiCloudConfig {
 
 /** Longest a provider call may take before the call is treated as unavailable. */
 const TIMEOUT_MS = 60_000;
+/** A streamed call with provider tools runs searches before it answers: give it longer. */
+const TOOL_CALL_TIMEOUT_MS = 180_000;
 
 /**
  * The real NEAR AI Cloud. The model list and attestation shapes were checked against live responses on
@@ -35,7 +39,7 @@ export class NearAiCloudClient implements NearAiCloud {
 
   private async request(
     path: string,
-    init: RequestInit & { token?: string } = {},
+    init: RequestInit & { token?: string; timeoutMs?: number } = {},
   ): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${init.token ?? this.cfg.apiKey}`);
@@ -45,7 +49,7 @@ export class NearAiCloudClient implements NearAiCloud {
       res = await fetch(`${this.cfg.baseUrl}${path}`, {
         ...init,
         headers,
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(init.timeoutMs ?? TIMEOUT_MS),
       });
     } catch (err) {
       throw new NearAiError('unavailable', `NEAR AI Cloud unreachable: ${String(err)}`);
@@ -98,6 +102,7 @@ export class NearAiCloudClient implements NearAiCloud {
   }
 
   async chat(apiKey: string, request: ChatRequest): Promise<ChatResult> {
+    if (request.tools?.length) return this.chatWithTools(apiKey, request);
     const requestBody = JSON.stringify({ ...reasoningOff(request.model), ...request });
     const res = await this.request('/chat/completions', {
       method: 'POST',
@@ -138,6 +143,76 @@ export class NearAiCloudClient implements NearAiCloud {
       requestBody,
       responseBody,
     };
+  }
+
+  /**
+   * A call with provider-run tools. NEAR AI Cloud runs them only on a streamed chat completion
+   * (docs.near.ai/cloud/guides/web-search, verified live 2026-11-13); the signature covers the
+   * stream's exact bytes, which `responseBody` keeps.
+   */
+  private async chatWithTools(apiKey: string, request: ChatRequest): Promise<ChatResult> {
+    const requestBody = JSON.stringify({
+      ...reasoningOff(request.model),
+      ...request,
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+    const res = await this.request('/chat/completions', {
+      method: 'POST',
+      token: apiKey,
+      body: requestBody,
+      timeoutMs: TOOL_CALL_TIMEOUT_MS,
+    });
+    const headerId = res.headers.get('inference-id') ?? '';
+    // The stream arrives after the headers: a timeout or a dropped connection while reading it is a
+    // provider failure (billed, so it carries the inference id), not an unknown error.
+    let responseBody: string;
+    try {
+      responseBody = await res.text();
+    } catch (err) {
+      throw new NearAiError(
+        'unavailable',
+        `Stream interrupted: ${String(err)}`,
+        headerId || undefined,
+      );
+    }
+    const parsed = parseChatStream(responseBody);
+    const inferenceId = headerId || parsed.id;
+    if (!parsed.content.trim())
+      throw new NearAiError('bad_response', 'No completion content in the stream', inferenceId);
+    return {
+      chatId: parsed.id,
+      inferenceId,
+      model: request.model,
+      content: parsed.content,
+      promptTokens: parsed.usage.prompt_tokens,
+      completionTokens: parsed.usage.completion_tokens,
+      reasoningTokens: parsed.usage.reasoning_tokens,
+      requestBody,
+      responseBody,
+      toolResults: parsed.toolResults,
+    };
+  }
+
+  async services(): Promise<ServicePrice[]> {
+    // Verified 2026-11-13: `{ services: [{ serviceName, unit, costPerUnit (nano-USD) }] }`.
+    // Read at startup: a slow answer falls back to the listed fee rather than delaying boot.
+    const res = await this.request('/services', { timeoutMs: 5_000 });
+    const body = (await res.json()) as {
+      services?: {
+        serviceName: string;
+        unit: string;
+        costPerUnit: number | string;
+        isActive?: boolean;
+      }[];
+    };
+    return (body.services ?? [])
+      .filter((s) => s.isActive !== false)
+      .map((s) => ({
+        service: s.serviceName,
+        unit: s.unit,
+        costNanoPerUnit: BigInt(s.costPerUnit),
+      }));
   }
 
   async costs(inferenceIds: string[]): Promise<Record<string, bigint>> {
@@ -190,3 +265,57 @@ export function reasoningOff(model: string): Partial<ChatRequest> {
 
 /** Most reasoning tokens a model that can't stop reasoning may spend before it answers. */
 export const REASONING_BUDGET = 256;
+
+/** What a streamed chat completion said, from its server-sent events. */
+export function parseChatStream(text: string): {
+  id: string;
+  content: string;
+  usage: { prompt_tokens: number; completion_tokens: number; reasoning_tokens: number };
+  toolResults: ProviderToolResult[];
+} {
+  let id = '';
+  let content = '';
+  const usage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0 };
+  const toolResults: ProviderToolResult[] = [];
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data: ')) continue;
+    const data = line.slice(6).trim();
+    if (data === '[DONE]') continue;
+    let chunk: {
+      id?: string;
+      choices?: {
+        delta?: { content?: string | null; nearai_tool_result?: Partial<ProviderToolResult> };
+      }[];
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        reasoning_tokens?: number;
+        completion_tokens_details?: { reasoning_tokens?: number } | null;
+      } | null;
+    };
+    try {
+      chunk = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    if (!id && chunk.id) id = chunk.id;
+    const delta = chunk.choices?.[0]?.delta;
+    if (delta?.content) content += delta.content;
+    const tool = delta?.nearai_tool_result;
+    if (tool?.name)
+      toolResults.push({
+        name: tool.name,
+        status: tool.status ?? 'unknown',
+        output: tool.output ?? '',
+      });
+    if (chunk.usage) {
+      usage.prompt_tokens = chunk.usage.prompt_tokens ?? usage.prompt_tokens;
+      usage.completion_tokens = chunk.usage.completion_tokens ?? usage.completion_tokens;
+      usage.reasoning_tokens =
+        chunk.usage.completion_tokens_details?.reasoning_tokens ??
+        chunk.usage.reasoning_tokens ??
+        usage.reasoning_tokens;
+    }
+  }
+  return { id, content, usage, toolResults };
+}

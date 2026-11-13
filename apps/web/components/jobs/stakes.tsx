@@ -14,18 +14,11 @@ const SETTLEMENT_STYLE: Record<
   paid: { tone: 'good', box: 'border-good/40 bg-good-soft', icon: '✓' },
   paid_after_dispute: { tone: 'shield', box: 'border-shield bg-shield-soft', icon: '⚖' },
   refunded: { tone: 'bad', box: 'border-bad/40 bg-bad-soft', icon: '↩' },
+  judging: { tone: 'shield', box: 'border-shield bg-shield-soft', icon: '⚖' },
+  graded: { tone: 'shield', box: 'border-shield bg-shield-soft', icon: '✎' },
   outside: { tone: 'neutral', box: 'border-line bg-surface-2', icon: '↗' },
   expired: { tone: 'neutral', box: 'border-line bg-surface-2', icon: '⏱' },
   cancelled: { tone: 'neutral', box: 'border-line bg-surface-2', icon: '✕' },
-};
-
-const _SETTLEMENT_LABEL: Record<NonNullable<JobView['settlement']>['kind'], string> = {
-  paid: 'Paid',
-  paid_after_dispute: 'Paid after a dispute',
-  refunded: 'Refunded',
-  outside: 'Went outside Hustle',
-  expired: 'Expired',
-  cancelled: 'Cancelled',
 };
 
 /** How the job ended, in the API's own words. A dispute the arbiter paid is spelled out. */

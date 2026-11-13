@@ -35,6 +35,30 @@ export interface ChatRequest {
   chat_template_kwargs?: Record<string, boolean>;
   thinking_token_budget?: number;
   reasoning_effort?: 'low' | 'medium' | 'high';
+  /**
+   * Tools the provider runs itself during the call (NEAR AI Cloud's `web_context_search`). They
+   * can't be combined with `response_format`: verified 2026-11-13, a schema makes the model skip them.
+   */
+  tools?: ProviderTool[];
+}
+
+/** A tool the provider runs server-side, named by its type. */
+export interface ProviderTool {
+  type: string;
+}
+
+/** A tool the provider ran during the call, and what it returned to the model. */
+export interface ProviderToolResult {
+  name: string;
+  status: string;
+  output: string;
+}
+
+/** A per-unit price NEAR AI Cloud charges on top of tokens (`GET /v1/services`). */
+export interface ServicePrice {
+  service: string;
+  unit: string;
+  costNanoPerUnit: bigint;
 }
 
 export interface ChatResult {
@@ -51,6 +75,8 @@ export interface ChatResult {
   /** Exact bytes sent and received: the signature covers their sha256. */
   requestBody: string;
   responseBody: string;
+  /** Provider-run tools used during the call; their fees are billed apart from `costs`. */
+  toolResults?: ProviderToolResult[];
 }
 
 export interface ResponseSignature {
@@ -100,6 +126,8 @@ export interface NearAiCloud {
   costs(inferenceIds: string[]): Promise<Record<string, bigint>>;
   signature(chatId: string): Promise<ResponseSignature>;
   attestation(nonce: string, model: string): Promise<AttestationReport>;
+  /** Per-unit prices for provider services (tools), which `costs` doesn't include. */
+  services(): Promise<ServicePrice[]>;
 }
 
 export class NearAiError extends Error {

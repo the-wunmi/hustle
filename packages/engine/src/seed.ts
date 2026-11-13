@@ -59,6 +59,7 @@ export async function seedWorld(engine: Engine): Promise<void> {
     );
   }
   const house = await engine.db.select().from(players).where(eq(players.isHouse, true));
+  for (const p of house) engine.houseOwners.add(p.id);
   const existing = await engine.db.select().from(agents);
   for (const rival of RIVALS) {
     if (existing.some((a) => a.name === rival.name)) continue;

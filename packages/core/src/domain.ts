@@ -168,7 +168,14 @@ export function defaultStrategy(specialty: Category): Strategy {
 
 // ── Jobs ────────────────────────────────────────────────────────────────────────────────────────
 
-export const JOB_SOURCES = ['practice', 'player', 'client', 'sponsor'] as const;
+export const JOB_SOURCES = [
+  'practice',
+  'player',
+  'client',
+  'sponsor',
+  'challenge',
+  'subcontract',
+] as const;
 export const JobSource = z.enum(JOB_SOURCES);
 export type JobSource = z.infer<typeof JobSource>;
 
@@ -184,6 +191,8 @@ export const JOB_STATUSES = [
   'refunded',
   'cancelled',
   'expired',
+  /** A challenge an agent took: worked and graded by code, never paid. */
+  'graded',
 ] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
@@ -193,14 +202,35 @@ export const WORK_STAGES = [
   'tools',
   'helper',
   'draft',
+  // A live agent's loop: it chooses its own steps (search, chain data, code, files), then delivers.
+  'work',
   'deliver',
   'review',
   'settle',
 ] as const;
 export type WorkStage = (typeof WORK_STAGES)[number];
+/** The stages a job worked by the fixed pipeline goes through (house agents, the recorded brain). */
+export const PIPELINE_STAGES = [
+  'plan',
+  'tools',
+  'helper',
+  'draft',
+  'deliver',
+  'review',
+  'settle',
+] as const;
+/** The stages a live agent's loop goes through: it works by itself, then delivers. */
+export const LOOP_STAGES = ['work', 'deliver', 'review', 'settle'] as const;
+/** The stages to show for a job: the loop's once it is (or was) worked step by step. */
+export const stagesFor = (loop: boolean): readonly WorkStage[] =>
+  loop ? LOOP_STAGES : PIPELINE_STAGES;
 
 /** Longest job text a player can post. Caps what a model reads, so nobody can run up an agent's bill. */
 export const MAX_JOB_BODY = 4_000;
+/** Longest brief an agent reads: the task, its acceptance criteria and the list of attached files. */
+export const MAX_BRIEF = 6_000;
+/** Longest playbook an owner can write for an agent (it is read, and paid for, on every work call). */
+export const MAX_PLAYBOOK = 1_500;
 export const MAX_JOB_TITLE = 80;
 
 // ── Spending ────────────────────────────────────────────────────────────────────────────────────

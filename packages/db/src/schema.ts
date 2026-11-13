@@ -106,6 +106,10 @@ export const agents = pgTable(
     ownerId: uuid('owner_id')
       .notNull()
       .references(() => players.id),
+    /** Its owner's price for one task, for anyone who hires it directly (null: not offered). */
+    hireRate: money('hire_rate'),
+    /** The player who minted it: earns a royalty on every resale through Hustle. */
+    creatorId: uuid('creator_id').references(() => players.id),
     name: text('name').notNull(),
     look: jsonb('look').notNull(),
     traits: jsonb('traits').$type<string[]>().notNull(),
@@ -147,9 +151,49 @@ export const agents = pgTable(
      * agent. Its history, ledger and NFT stay as they are, and its page still opens from links.
      */
     hidden: boolean('hidden').notNull().default(false),
+    /**
+     * The owner's instructions, read by the agent on every call. Private to the owner; the public
+     * sees only its fingerprint and when it changed. It goes with the agent when it is sold.
+     */
+    playbook: text('playbook').notNull().default(''),
+    playbookUpdatedAt: timestamp('playbook_updated_at', { withTimezone: true }),
+    /** How many memories it keeps (agent_memories rows), so costs and pages need no count query. */
+    memoryCount: integer('memory_count').notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex('agents_account_uq').on(t.accountId), index('agents_owner_ix').on(t.ownerId)],
+);
+
+/**
+ * What an agent remembers from a finished job: the facts, and the lesson it wrote (paid for from
+ * its wallet). Recalled into later jobs by client and category; goes with the agent when sold.
+ */
+export const agentMemories = pgTable(
+  'agent_memories',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    jobId: uuid('job_id').notNull(),
+    category: text('category').notNull(),
+    client: text('client').notNull(),
+    /** paid | refunded */
+    outcome: text('outcome').notNull(),
+    rating: integer('rating'),
+    price: money('price').notNull(),
+    /** The agent's own lesson; null until it reflects, or when the reflection failed or was skipped. */
+    lesson: text('lesson'),
+    /** When the reflection was claimed (null: still queued). Claimed once, so never re-billed. */
+    reflectedAt: timestamp('reflected_at', { withTimezone: true }),
+    tick: integer('tick').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('agent_memories_job_uq').on(t.agentId, t.jobId),
+    index('agent_memories_agent_ix').on(t.agentId, t.tick),
+    index('agent_memories_queue_ix').on(t.tick).where(sql`${t.reflectedAt} is null`),
+  ],
 );
 
 // ── Jobs and bids ───────────────────────────────────────────────────────────────────────────────
@@ -191,6 +235,8 @@ export const jobs = pgTable(
     deliverable: text('deliverable'),
     workHash: text('work_hash'),
     embeddedInstructions: text('embedded_instructions'),
+    /** What the client says done looks like; agents read it with the brief. */
+    criteria: text('criteria'),
     quality: doublePrecision('quality'),
     rating: integer('rating'),
     helperAgentId: uuid('helper_agent_id'),
@@ -208,11 +254,34 @@ export const jobs = pgTable(
     outsidePrice: money('outside_price'),
     /** The client disputed and the arbiter ruled (paid or refunded). */
     disputed: boolean('disputed').notNull().default(false),
+    /** The working agent's one question to the client, the client's answer, and when it asked. */
+    question: text('question'),
+    answer: text('answer'),
+    askedTick: integer('asked_tick'),
+    /** Whether the working agent may hire another agent for part of it (the client's choice). */
+    subcontracting: boolean('subcontracting').notNull().default(true),
+    /** A subcontract: the job it is part of, and the hiring agent's loop step that asked for it. */
+    parentJobId: uuid('parent_job_id'),
+    parentStep: integer('parent_step'),
+    /**
+     * The arbiter's ruling on a dispute, stored before the chain is told, so a restart resolves it the
+     * same way: who ruled (`model` read the brief and the work; `rule` is the quality-score rule),
+     * whether it refunds, and why.
+     */
+    ruling: jsonb('ruling').$type<{
+      by: 'model' | 'rule';
+      refund: boolean;
+      reason: string;
+      model?: string;
+      verified?: boolean;
+      callHash?: string;
+    }>(),
     createdDay: integer('created_day').notNull(),
     createdAt: createdAt(),
     settledAt: timestamp('settled_at', { withTimezone: true }),
   },
   (t) => [
+    uniqueIndex('jobs_parent_step_uq').on(t.parentJobId, t.parentStep),
     index('jobs_status_ix').on(t.status),
     index('jobs_agent_ix').on(t.awardedAgentId),
     uniqueIndex('jobs_chain_uq').on(t.chainJobId),
@@ -260,6 +329,8 @@ export const agentSales = pgTable(
       .references(() => players.id),
     price: money('price').notNull(),
     fee: money('fee').notNull(),
+    /** The creator's royalty paid from the seller's proceeds (0 when the seller is the creator). */
+    royalty: money('royalty').notNull().default(sql`0`),
     day: integer('day').notNull(),
     /** The buy's request id, so a retried purchase is recorded once. */
     requestId: text('request_id').notNull(),
@@ -304,6 +375,110 @@ export const calls = pgTable(
 
 // ── Money ───────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Files a job works on: what the client attached, what the agent's tools fetched, and what the agent
+ * wrote.
+ * Text only (CSV, JSON, Markdown), size-capped; the sandbox reads them from `/work`.
+ */
+export const jobFiles = pgTable(
+  'job_files',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    jobId: uuid('job_id')
+      .notNull()
+      .references(() => jobs.id),
+    name: text('name').notNull(),
+    content: text('content').notNull(),
+    sha256: text('sha256').notNull(),
+    /** client | tool:<id> | agent */
+    source: text('source').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('job_files_name_uq').on(t.jobId, t.name)],
+);
+
+/**
+ * Each sandbox run an agent made for a job: its code, the hashes of the files it read and what it
+ * printed. Anyone who may see the deliverable can re-run it in a browser and compare.
+ */
+export const sandboxRuns = pgTable(
+  'sandbox_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    jobId: uuid('job_id')
+      .notNull()
+      .references(() => jobs.id),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    round: integer('round').notNull(),
+    code: text('code').notNull(),
+    /** name → sha256 of each input file. */
+    inputs: jsonb('inputs').$type<Record<string, string>>().notNull(),
+    stdout: text('stdout').notNull(),
+    stderr: text('stderr').notNull(),
+    error: text('error'),
+    runMs: integer('run_ms').notNull(),
+    stdoutHash: text('stdout_hash').notNull(),
+    cost: money('cost').notNull(),
+    tick: integer('tick').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('sandbox_runs_round_uq').on(t.jobId, t.agentId, t.round)],
+);
+
+/**
+ * The agent loop's record of a job: each turn's thought, the action it chose and what came back,
+ * with what the turn cost. The client and the agent's owner see it all; others see the shape.
+ */
+export const jobSteps = pgTable(
+  'job_steps',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    jobId: uuid('job_id')
+      .notNull()
+      .references(() => jobs.id),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    n: integer('n').notNull(),
+    /** python | search | chain | fetch | hire | ask | write | pay | deliver | none */
+    action: text('action').notNull(),
+    /** The action's header (a file name, a payee and amount), shown with it. */
+    args: text('args').notNull().default(''),
+    thought: text('thought').notNull().default(''),
+    input: text('input').notNull().default(''),
+    observation: text('observation').notNull().default(''),
+    ok: boolean('ok').notNull().default(true),
+    cost: money('cost').notNull().default(sql`0`),
+    tick: integer('tick').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('job_steps_n_uq').on(t.jobId, t.agentId, t.n)],
+);
+
+/**
+ * Challenges an agent took: per challenge, fresh attempts and how many it solved, beside the same
+ * model plain on the same instances. Each attempt's job keeps the evidence.
+ */
+export const agentCredentials = pgTable(
+  'agent_challenges',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    challengeId: text('challenge_id').notNull(),
+    attempts: integer('attempts').notNull(),
+    solved: integer('solved').notNull(),
+    plainAttempts: integer('plain_attempts').notNull(),
+    plainSolved: integer('plain_solved').notNull(),
+    lastJobId: uuid('last_job_id'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('agent_challenges_uq').on(t.agentId, t.challengeId)],
+);
+
 /** Every NEAR AI Cloud call an agent made, with its metered cost and verification result. */
 export const inferenceCalls = pgTable(
   'inference_calls',
@@ -338,7 +513,12 @@ export const inferenceCalls = pgTable(
     spendKey: text('spend_key'),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex('inference_key_uq').on(t.key), index('inference_job_ix').on(t.jobId)],
+  (t) => [
+    uniqueIndex('inference_key_uq').on(t.key),
+    index('inference_job_ix').on(t.jobId),
+    // Day ends and the proof page read an agent's calls.
+    index('inference_agent_ix').on(t.agentId, t.tick),
+  ],
 );
 
 /**

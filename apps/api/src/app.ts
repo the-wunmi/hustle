@@ -12,6 +12,7 @@ import { PLAYER_TASK_IDEAS, typicalJobCost, VENDORS } from '@hustle/economy';
 import {
   agentView,
   answerCall,
+  answerQuestion,
   anyAgent,
   approvalsView,
   backAgent,
@@ -28,7 +29,9 @@ import {
   type Engine,
   fairValue,
   feedView,
+  hireAgent,
   holderView,
+  jobFileForViewer,
   jobSummaries,
   jobView,
   leaderboardView,
@@ -37,6 +40,7 @@ import {
   logout,
   marketplaceView,
   markPresent,
+  memoriesOf,
   meView,
   mintAgent,
   nftHistoryView,
@@ -50,9 +54,12 @@ import {
   rateJob,
   sendAgentAfterJob,
   setFrozen,
+  setHireRate,
+  setPlaybook,
   startEmailLogin,
   startWalletLogin,
   summariesOf,
+  takeChallenge,
   topUp,
   trainSkill,
   updateRulebook,
@@ -93,6 +100,7 @@ const FeedQuery = z.object({
 });
 /** Request bodies are small JSON; a job post is the largest at ~4 KB of text. */
 const MAX_BODY_BYTES = 32 * 1024;
+const MAX_TASK_BODY_BYTES = 1_300 * 1024;
 
 const STATUS: Record<DomainErrorCode, 400 | 401 | 402 | 403 | 404 | 409 | 429 | 503> = {
   invalid: 400,
@@ -118,12 +126,14 @@ export function createApp(engine: Engine) {
   const app = new Hono<Env>().basePath('/api');
   const lane = <T>(fn: () => Promise<T>) => engine.lane.run(fn);
 
-  app.use(
-    '*',
-    bodyLimit({
-      maxSize: MAX_BODY_BYTES,
-      onError: (c) => c.json({ error: 'Request too large' }, 413),
-    }),
+  const tooLarge = (c: Context) => c.json({ error: 'Request too large' }, 413);
+  const smallBodies = bodyLimit({ maxSize: MAX_BODY_BYTES, onError: tooLarge });
+  // Posting a task may carry its files (three of up to 200,000 characters each).
+  const taskBodies = bodyLimit({ maxSize: MAX_TASK_BODY_BYTES, onError: tooLarge });
+  app.use('*', (c, next) =>
+    c.req.method === 'POST' && c.req.path === '/api/jobs'
+      ? taskBodies(c, next)
+      : smallBodies(c, next),
   );
   // Writes from a browser must come from the game's own origin (CSRF): with PUBLIC_ORIGIN set (the
   // public https URL in production), a state-changing request whose Origin is anything else is
@@ -464,6 +474,37 @@ export function createApp(engine: Engine) {
   ownerAction('withdraw', (p, a, i) => withdraw(engine, p, a, i as never));
   ownerAction('freeze', (p, a, i) => setFrozen(engine, p, a, i as never));
   ownerAction('train', (p, a, i) => trainSkill(engine, p, a, i as never));
+  ownerAction('playbook', (p, a, i) => setPlaybook(engine, p, a, i as never));
+  ownerAction('hire-rate', (p, a, i) => setHireRate(engine, p, a, i as never));
+  // The owner sends the agent at a fresh challenge; it works it in the background.
+  app.post('/agents/:id/challenge', async (c) => {
+    const player = me(c);
+    ownerActions.take(player.id);
+    const input = await body(c);
+    const started = await lane(async () =>
+      takeChallenge(
+        engine,
+        player,
+        await ownedAgent(engine, player, c.req.param('id')),
+        input as never,
+      ),
+    );
+    return send(c, started, 201);
+  });
+  // Anyone hires an agent its owner opened for direct hire: one task, at the owner's rate.
+  app.post('/agents/:id/hire', async (c) => {
+    const player = me(c);
+    const input = await body(c);
+    const job = await lane(async () =>
+      hireAgent(engine, player, await anyAgent(engine, c.req.param('id')), input as never),
+    );
+    return send(c, await jobView(engine, job, player), 201);
+  });
+  // What the agent remembers is its owner's to read; everyone else sees only how much.
+  app.get('/agents/:id/memory', async (c) => {
+    const player = me(c);
+    return send(c, await memoriesOf(engine, await ownedAgent(engine, player, c.req.param('id'))));
+  });
   // ── Marketplace ───────────────────────────────────────────────────────────────────────────────
   ownerAction('listing', (p, a, i) => listAgent(engine, p, a, i as never));
   ownerAction('unlist', (p, a) => cancelListing(engine, p, a));
@@ -587,6 +628,20 @@ export function createApp(engine: Engine) {
     const job = await lane(() => postTask(engine, player, input as never));
     return send(c, await jobView(engine, job, player), 201);
   });
+  // A job file's contents, for the browser re-run of the agent's analysis.
+  app.get('/jobs/:id/files/:name', async (c) => {
+    const id = z.uuid().safeParse(c.req.param('id'));
+    if (!id.success) return c.json({ error: 'Not found' }, 404);
+    const content = await jobFileForViewer(engine, id.data, c.req.param('name'), c.get('player'));
+    if (content === null) return c.json({ error: 'Not found' }, 404);
+    // Client-supplied content from this site's origin: never rendered, never sniffed into HTML.
+    return c.text(content, 200, {
+      'content-type': 'text/plain; charset=utf-8',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': 'sandbox',
+      'content-disposition': `attachment; filename="${c.req.param('name').replace(/[^\w.-]/g, '_')}"`,
+    });
+  });
   app.get('/jobs/:id', async (c) => {
     const id = z.uuid().safeParse(c.req.param('id'));
     const player = c.get('player');
@@ -632,6 +687,7 @@ export function createApp(engine: Engine) {
   });
   clientAction('award', (_p, j, i) => chooseBid(engine, j, i as never));
   clientAction('rate', (p, j, i) => rateJob(engine, p, j, i as never));
+  clientAction('answer', (p, j, i) => answerQuestion(engine, p, j, i as never));
   clientAction('cancel', (p, j) => cancelJob(engine, p, j));
 
   // ── Leaderboard and wallet ────────────────────────────────────────────────────────────────────

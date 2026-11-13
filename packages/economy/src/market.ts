@@ -38,6 +38,29 @@ export interface JobDraft {
   contractTier?: number | null;
   /** A client who gives new agents a first job: level-1 agents only, no outside offers. */
   rookie?: boolean;
+  /** What done looks like, and the files the work is done on (expert work). */
+  criteria?: string | null;
+  files?: readonly { name: string; content: string }[];
+  /** False when the client doesn't want the agent hiring others for parts of it. */
+  subcontracting?: boolean;
+}
+
+/** The brief agents read: the task, its acceptance criteria and the files attached. */
+export function briefOf(data: {
+  body: string;
+  criteria?: string | null | undefined;
+  files?: readonly { name: string; content: string }[] | undefined;
+}): string {
+  const files = data.files ?? [];
+  return [
+    data.body,
+    data.criteria ? `Acceptance criteria:\n${data.criteria}` : '',
+    files.length
+      ? `Attached files: ${files.map((f) => `${f.name} (${f.content.length.toLocaleString('en')} characters)`).join(', ')}.`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 /** Most clients shop on price; fewer pay for quality. */
@@ -131,11 +154,15 @@ export function spawnClientJobs(rng: Rng, ctx: MarketContext): JobDraft[] {
       source: 'client',
       category: template.category,
       title: template.title,
-      body: needs
-        ? withSpecialist(template.body, needs, rng)
-        : rookie
-          ? `${template.body}\n\nWe like giving new agents a first job: level 1 only.`
-          : template.body,
+      body: briefOf({
+        body: needs
+          ? withSpecialist(template.body, needs, rng)
+          : rookie
+            ? `${template.body}\n\nWe like giving new agents a first job: level 1 only.`
+            : template.body,
+        criteria: template.criteria,
+        files: template.files,
+      }),
       budget,
       minLevel: template.minLevel,
       clientName: rng.pick(CLIENT_NAMES),
@@ -147,6 +174,8 @@ export function spawnClientJobs(rng: Rng, ctx: MarketContext): JobDraft[] {
       clientStyle: pickClientStyle(rng),
       specialist: needs?.handle ?? null,
       rookie,
+      criteria: template.criteria ?? null,
+      files: template.files ?? [],
     });
   }
   return drafts;

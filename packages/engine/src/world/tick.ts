@@ -1,7 +1,9 @@
 import type { RpcStats } from '@hustle/chain';
+import { reflectOnJobs } from '../agents/memory.ts';
 import { refreshAllBalances } from '../agents/state.ts';
 import { expireCalls, raiseCalls } from '../calls.ts';
 import { dayOf, type Engine, saveClock } from '../context.ts';
+import { refreshToolsOpen } from '../tools/index.ts';
 import { houseTrading } from '../trade.ts';
 import { endDay } from './day.ts';
 import { activeAgents, closeAuctions, placeBids, spawnJobs, tickRng } from './market.ts';
@@ -25,6 +27,7 @@ export function tickPhases(engine: Engine): (() => Promise<void>)[] {
     async () => {
       engine.clock.tick += 1;
       await saveClock(engine);
+      await refreshToolsOpen(engine);
       // Close every finished day, oldest first. Each day's close is a workflow keyed by the day, so
       // one cut short by a crash resumes where it stopped, and asking again for a closed day is a no-op.
       const lastFinished = dayOf(engine) - 1;
@@ -42,6 +45,9 @@ export function tickPhases(engine: Engine): (() => Promise<void>)[] {
     },
     () => closeAuctions(engine, active.length),
     () => advanceWork(engine),
+    // Players' agents write a lesson from each job that settled.
+    () =>
+      reflectOnJobs(engine).catch((err) => engine.log('reflection failed', { error: String(err) })),
     async () => {
       // Unanswered calls take their default before agents bid, so a lapsed pitch lets the agent bid.
       await expireCalls(engine);

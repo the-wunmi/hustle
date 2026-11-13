@@ -206,9 +206,11 @@ export function RulebookEditor({
       </div>
 
       <fieldset className="mt-6">
-        <legend className="font-semibold">Vendors it may pay for tools</legend>
+        <legend className="font-semibold">Specialists it may pay</legend>
         <p className="mb-2 text-sm text-ink-2">
-          Tools are paid per call. A payment to anyone not on this list is blocked.
+          Data sellers some jobs ask for. A payment to anyone not on this list is blocked, or comes
+          to you to approve. Web search isn't a vendor: it's paid as thinking, within the caps
+          above.
         </p>
         {!vendors && <p className="text-sm text-muted">Loading vendors…</p>}
         <ul className="grid gap-2 sm:grid-cols-2">

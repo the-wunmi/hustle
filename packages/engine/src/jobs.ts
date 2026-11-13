@@ -9,13 +9,15 @@ import {
   usd,
 } from '@hustle/core';
 import { agents, bids, jobs } from '@hustle/db';
-import { expectedJobCost, MAX_OPEN_BIDS, overJobCap, VENDORS } from '@hustle/economy';
+import { briefOf, expectedJobCost, MAX_OPEN_BIDS, overJobCap } from '@hustle/economy';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { chainDomainError } from './agents/manage.ts';
-import { levelOf, snapshotOf, tierOf, traitsOf } from './agents/state.ts';
+import { type AgentRow, levelOf, snapshotOf, tierOf, traitsOf } from './agents/state.ts';
 import { think } from './brain/think.ts';
 import type { Engine } from './context.ts';
+import { toolsFor } from './context.ts';
+import { isFileName, MAX_CLIENT_FILES, MAX_FILE_CHARS } from './files.ts';
 import type { PlayerRow } from './players.ts';
 import { ensurePlayerAccount } from './players.ts';
 import { post } from './record.ts';
@@ -30,6 +32,13 @@ export const MAX_PLAYER_BUDGET = usd('5');
 /** Open jobs one player may have at once, so nobody floods the board. */
 export const MAX_OPEN_PLAYER_JOBS = 5;
 
+/** Postgres text can't hold a NUL character: refused up front, before any money is escrowed. */
+const noNul = (text: string) => !text.includes('\u0000');
+const NO_NUL = 'Text files only: this one contains a NUL character';
+
+/** Longest acceptance criteria a task can have. */
+export const MAX_CRITERIA = 1_000;
+
 export const PostTask = z.object({
   title: z.string().trim().min(4).max(MAX_JOB_TITLE),
   body: z.string().trim().min(10).max(MAX_JOB_BODY),
@@ -39,6 +48,29 @@ export const PostTask = z.object({
     'Budget must be between $0.10 and $5.00',
   ),
   autoAward: z.boolean().default(true),
+  /** Whether the agent may hire another agent for part of the work (sharing only that part). */
+  subcontracting: z.boolean().default(true),
+  /** What done looks like: agents read it with the brief. */
+  criteria: z.string().trim().max(MAX_CRITERIA).refine(noNul, NO_NUL).optional(),
+  /** Text files for the agent to work on (CSV, JSON, Markdown…), read in its sandbox. */
+  files: z
+    .array(
+      z.object({
+        name: z
+          .string()
+          .refine(
+            isFileName,
+            'Use a plain file name ending in .csv, .json, .txt, .md, .tsv or .py',
+          ),
+        content: z.string().max(MAX_FILE_CHARS).refine(noNul, NO_NUL),
+      }),
+    )
+    .max(MAX_CLIENT_FILES)
+    .default([])
+    .refine(
+      (fs) => new Set(fs.map((f) => f.name)).size === fs.length,
+      'Each file needs its own name',
+    ),
 });
 export const RateJob = z.object({ rating: z.int().min(1).max(5) });
 export const AwardBid = z.object({ bidId: z.uuid() });
@@ -47,6 +79,7 @@ export async function postTask(
   engine: Engine,
   player: PlayerRow,
   input: z.input<typeof PostTask>,
+  opts: { reservedForAgentId?: string } = {},
 ): Promise<JobRow> {
   const data = parseInput(PostTask, input);
   const mine = await engine.db
@@ -70,7 +103,11 @@ export async function postTask(
       source: 'player',
       category: data.category,
       title: data.title,
-      body: data.body,
+      // Agents read one brief: the task, what done looks like and which files come with it.
+      body: briefOf(data),
+      criteria: data.criteria ?? null,
+      files: data.files,
+      subcontracting: data.subcontracting,
       budget: data.budget,
       minLevel: 1,
       clientName: player.name,
@@ -81,6 +118,7 @@ export async function postTask(
       answerKeywords: null,
       clientStyle: 'balanced',
     },
+    opts,
   );
   if (!job) throw new DomainError('unavailable', 'Could not post the job');
   return job;
@@ -153,9 +191,11 @@ export async function rateJob(
         kind: 'refunded',
         tone: 'neutral',
         text:
-          result === 'refunded'
-            ? `The arbiter agreed with you on "${job.title}": your budget is refunded.`
-            : `The arbiter judged "${job.title}" good enough and paid ${agent.name}.`,
+          result === 'pending'
+            ? `You disputed "${job.title}". The arbiter is reading the brief and the work.`
+            : result === 'refunded'
+              ? `The arbiter agreed with you on "${job.title}": your budget is refunded.`
+              : `The arbiter judged "${job.title}" good enough and paid ${agent.name}.`,
         jobId: job.id,
         playerId: player.id,
         scope: 'owner',
@@ -246,10 +286,15 @@ export async function sendAgentAfterJob(
     snapshotOf(agent),
     jobSnapshot(job, null),
     engine.brains[tierOf(agent)],
-    VENDORS,
+    toolsFor(engine, agent),
   );
   const snapshot = snapshotOf(agent);
-  const needs = overJobCap(snapshot, jobSnapshot(job, null), engine.brains[tierOf(agent)], VENDORS);
+  const needs = overJobCap(
+    snapshot,
+    jobSnapshot(job, null),
+    engine.brains[tierOf(agent)],
+    toolsFor(engine, agent),
+  );
   if (needs !== null) {
     throw new DomainError(
       'conflict',
@@ -290,4 +335,113 @@ export async function sendAgentAfterJob(
     jobId: job.id,
     amount: price,
   });
+}
+
+export const HireRate = z.object({ rate: MicroAmount.nullable() });
+
+/**
+ * The owner opens their agent for direct hire at a price per task (or closes it with null). Anyone
+ * but the owner may then hire it for one task at that price: no auction, the agent starts at once.
+ */
+export async function setHireRate(
+  engine: Engine,
+  _player: PlayerRow,
+  agent: AgentRow,
+  input: z.input<typeof HireRate>,
+): Promise<void> {
+  const { rate } = parseInput(HireRate, input);
+  if (rate !== null && (rate < MIN_PLAYER_BUDGET || rate > MAX_PLAYER_BUDGET))
+    throw new DomainError('invalid', 'A rate is between $0.10 and $5.00 a task');
+  await engine.db.update(agents).set({ hireRate: rate }).where(eq(agents.id, agent.id));
+}
+
+export const HireAgent = PostTask.omit({ budget: true, autoAward: true });
+
+/**
+ * A client hires an agent directly for one task at its owner's rate: the task is posted reserved for
+ * it, with the rate in escrow, and awarded to it at once. The owner earns as from any job; nothing
+ * about the agent changes hands.
+ */
+export async function hireAgent(
+  engine: Engine,
+  player: PlayerRow,
+  agent: AgentRow,
+  input: z.input<typeof HireAgent>,
+): Promise<JobRow> {
+  const data = parseInput(HireAgent, input);
+  const rate = agent.hireRate;
+  if (rate === null) throw new DomainError('conflict', `${agent.name} isn't open for direct hire`);
+  if (agent.ownerId === player.id)
+    throw new DomainError('invalid', 'Your agent can’t take your own task');
+  if (agent.dormantSinceDay !== null || agent.frozen || !agent.accountId)
+    throw new DomainError('conflict', `${agent.name} can't work right now`);
+  if (agent.busyJobId)
+    throw new DomainError('conflict', `${agent.name} is busy on another job. Try again soon.`);
+  // The same checks as a bid: the owner's rulebook must let it finish, at a price above its cost.
+  const draft = {
+    category: data.category,
+    budget: rate,
+    minLevel: 1,
+    body: data.body,
+    scam: false,
+    clientStyle: 'balanced',
+    rookie: false,
+    source: 'player',
+    id: '',
+  } as unknown as JobRow;
+  const needs = overJobCap(
+    snapshotOf(agent),
+    jobSnapshot(draft, null),
+    engine.brains[tierOf(agent)],
+    toolsFor(engine, agent),
+  );
+  const floor = expectedJobCost(
+    snapshotOf(agent),
+    jobSnapshot(draft, null),
+    engine.brains[tierOf(agent)],
+    toolsFor(engine, agent),
+  );
+  if (needs !== null || rate < floor)
+    throw new DomainError(
+      'conflict',
+      `${agent.name} can't take this task at its rate: its owner's rulebook or rate is too tight for it`,
+    );
+  const job = await postTask(
+    engine,
+    player,
+    { ...data, budget: rate, autoAward: true },
+    { reservedForAgentId: agent.id },
+  );
+  const [bid] = await engine.db
+    .insert(bids)
+    .values({
+      jobId: job.id,
+      agentId: agent.id,
+      price: rate,
+      pitch: `Hired directly at ${formatUsd(rate)}.`,
+      status: 'open',
+      createdTick: engine.clock.tick,
+    })
+    .returning();
+  if (bid) await awardJob(engine, job, bid.id);
+  const [after] = await engine.db.select().from(jobs).where(eq(jobs.id, job.id));
+  return after ?? job;
+}
+
+export const AnswerQuestion = z.object({
+  answer: z.string().trim().min(1).max(1_000).refine(noNul, NO_NUL),
+});
+
+/** The client answers the working agent's question; its loop picks the answer up on the next tick. */
+export async function answerQuestion(
+  engine: Engine,
+  player: PlayerRow,
+  job: JobRow,
+  input: z.input<typeof AnswerQuestion>,
+): Promise<void> {
+  const { answer } = parseInput(AnswerQuestion, input);
+  if (job.clientPlayerId !== player.id) throw new DomainError('not_found', 'Job not found');
+  if (!job.question || job.answer || job.status !== 'working')
+    throw new DomainError('conflict', 'There is no question waiting for an answer');
+  await engine.db.update(jobs).set({ answer }).where(eq(jobs.id, job.id));
 }

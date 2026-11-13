@@ -4,11 +4,15 @@ import { type BidView, CATEGORY_LABEL, type JobView } from '@hustle/core/browser
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
+import { AnalysisPanel } from '@/components/jobs/analysis';
 import { Countdown, isFinal, ScamReveal, StageTrack } from '@/components/jobs/job-bits';
+import { QuestionPanel } from '@/components/jobs/question';
 import { RateNowBanner, RatePanel } from '@/components/jobs/rate';
 import { SendAgent } from '@/components/jobs/send-agent';
 import { SettlementCard, StakesPanel } from '@/components/jobs/stakes';
+import { StepsPanel } from '@/components/jobs/steps';
 import { HowItRan } from '@/components/jobs/timeline';
+import { Markdown } from '@/components/markdown';
 import { Portrait } from '@/components/portrait';
 import { useSound, useToast } from '@/components/providers';
 import {
@@ -41,6 +45,9 @@ export default function JobPage() {
     shouldRetryOnError: (err) => !(err instanceof ApiError && err.status === 404),
     errorRetryInterval: 2000,
     errorRetryCount: 30,
+    // While an agent works the job step by step, its steps aren't feed events: poll to show them live.
+    refreshInterval: (latest?: JobView) =>
+      latest?.stage === 'work' || latest?.settlement?.kind === 'judging' ? 2500 : 0,
   });
   const [justSent, setJustSent] = useState<string | null>(null);
 
@@ -97,8 +104,13 @@ export default function JobPage() {
             }}
           />
           <StakesPanel job={job} />
-          <Bids job={job} justSent={justSent} onChange={() => void mutate()} />
+          {!NO_AUCTION.includes(job.source) && (
+            <Bids job={job} justSent={justSent} onChange={() => void mutate()} />
+          )}
           {job.awardedTo && <Progress job={job} />}
+          <QuestionPanel job={job} onAnswered={() => void mutate()} />
+          <StepsPanel job={job} />
+          <AnalysisPanel job={job} />
           {job.status === 'delivered' && job.canAct && (
             <RatePanel job={job} onRated={() => void mutate()} />
           )}
@@ -133,7 +145,13 @@ function JobHeader({ job }: { job: JobView }) {
         </div>
         <h1 className="mt-2 text-3xl font-extrabold sm:text-4xl">{job.title}</h1>
         <p className="mt-1 text-ink-2">
-          {job.clientIsMe ? 'Your task' : `Posted by ${job.clientName}`}
+          {job.source === 'challenge'
+            ? 'A fresh challenge, graded by code'
+            : job.source === 'subcontract'
+              ? `Part of a job, subcontracted by ${job.clientName}`
+              : job.clientIsMe
+                ? 'Your task'
+                : `Posted by ${job.clientName}`}
           {job.status === 'open' &&
             (job.autoAward ? (
               job.closesAtTick !== null && (
@@ -156,7 +174,7 @@ function JobHeader({ job }: { job: JobView }) {
             ))}
         </p>
       </div>
-      <HeldCard job={job} />
+      {job.source !== 'challenge' && <HeldCard job={job} />}
       {job.status === 'delivered' && job.canAct && (
         <div className="w-full">
           <RateNowBanner job={job} />
@@ -165,6 +183,9 @@ function JobHeader({ job }: { job: JobView }) {
     </div>
   );
 }
+
+/** Jobs that were never auctioned: a challenge, a part hired from inside another job. */
+const NO_AUCTION: readonly string[] = ['challenge', 'subcontract'];
 
 /** What the client's money is doing: the budget while bidding, then the agreed price. */
 function HeldCard({ job }: { job: JobView }) {
@@ -387,7 +408,11 @@ function Progress({ job }: { job: JobView }) {
           )}
         </p>
       </div>
-      <StageTrack stage={job.stage} status={job.status} />
+      <StageTrack
+        stage={job.stage}
+        status={job.status}
+        loop={job.stage === 'work' || job.steps.length > 0}
+      />
       {job.helper && (
         <div className="mt-4 flex items-center gap-3 rounded-xl bg-surface-2 p-3">
           <Portrait look={job.helper.agent.look} mood="busy" size={40} still />
@@ -404,8 +429,8 @@ function Progress({ job }: { job: JobView }) {
       {job.deliverable && (
         <div className="mt-5">
           <h3 className="font-display text-lg font-bold">The deliverable</h3>
-          <div className="mt-2 rounded-xl border-2 border-line bg-surface-2 p-4 whitespace-pre-wrap">
-            {job.deliverable}
+          <div className="mt-2 rounded-xl border-2 border-line bg-surface p-4">
+            <Markdown text={job.deliverable} />
           </div>
         </div>
       )}

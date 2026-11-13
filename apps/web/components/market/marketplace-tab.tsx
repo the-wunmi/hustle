@@ -163,7 +163,8 @@ function BuyDialog({ l, open, onClose }: { l: ListingView; open: boolean; onClos
         )}
         <p>
           {l.agent.name}'s wallet ({fmt(l.record.walletBalance)}) comes with it, along with its
-          level, rating, badges and streak. Its wallet stays frozen until you confirm its rulebook.
+          level, rating, badges and streak, and its owner's playbook and its memory. Its wallet
+          stays frozen until you confirm its rulebook.
         </p>
         <p className="text-ink-2">
           The sale is one transfer on the local NEAR node: your credits go to the seller and the

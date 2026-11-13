@@ -1,10 +1,11 @@
-import { WORK_STAGES, type WorkStage } from '@hustle/core/browser';
+import { stagesFor, type WorkStage } from '@hustle/core/browser';
 
 export const STAGE_LABEL: Record<WorkStage, string> = {
   plan: 'Planning',
   tools: 'Buying tools',
   helper: 'Hiring help',
   draft: 'Writing',
+  work: 'Working',
   deliver: 'Delivering',
   review: 'Client reviewing',
   settle: 'Getting paid',
@@ -12,10 +13,12 @@ export const STAGE_LABEL: Record<WorkStage, string> = {
 
 /** The seven work stages as a row of steps, with the current one marked. */
 export function StageTrack({ stage }: { stage: WorkStage | null }) {
-  const at = stage ? WORK_STAGES.indexOf(stage) : -1;
+  // A job in the agent's loop shows the loop's stages; the rest the pipeline's.
+  const stages = stagesFor(stage === 'work');
+  const at = stage ? stages.indexOf(stage) : -1;
   return (
     <ol className="flex gap-1" aria-label="Work stages">
-      {WORK_STAGES.map((s, i) => {
+      {stages.map((s, i) => {
         const state = i < at ? 'done' : i === at ? 'now' : 'todo';
         return (
           <li

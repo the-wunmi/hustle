@@ -1,7 +1,17 @@
 import { type Category, formatUsd } from '@hustle/core';
 import { agents } from '@hustle/db';
-import { BID_CALL, type CallSpec, honestVendors, workCalls } from '@hustle/economy';
+import {
+  ACT_CALL,
+  BID_CALL,
+  type CallSpec,
+  REFLECT_CALL,
+  toolById,
+  toolCall,
+  toolCost,
+  workCalls,
+} from '@hustle/economy';
 import { and, eq, isNotNull, isNull, ne } from 'drizzle-orm';
+import { recall } from '../agents/memory.ts';
 import {
   type AgentRow,
   avgRating100,
@@ -12,6 +22,7 @@ import {
 } from '../agents/state.ts';
 import type { BrainContext, Purpose } from '../brain/prompts.ts';
 import type { Engine } from '../context.ts';
+import { usableTools } from '../tools/index.ts';
 import { type JobRow, jobSnapshot } from './jobs.ts';
 
 const rulesInWords = (agent: AgentRow): string => {
@@ -27,6 +38,8 @@ const rulesInWords = (agent: AgentRow): string => {
 
 export function workloadFor(agent: AgentRow, job: JobRow, purpose: Purpose): CallSpec {
   if (purpose === 'bid') return BID_CALL;
+  if (purpose === 'reflect') return REFLECT_CALL;
+  if (purpose === 'act') return ACT_CALL;
   const calls = workCalls(snapshotOf(agent), jobSnapshot(job, null));
   const call = calls.find((c) => c.purpose === purpose) ?? calls.at(-1);
   return call ?? { purpose, inTokens: 1000, outTokens: 300 };
@@ -54,25 +67,63 @@ export async function helperCandidates(
     .slice(0, 3);
 }
 
+/** A tool's action in the agent loop. */
+const LOOP_ACTION: Record<string, string> = { web_search: 'search', chain_data: 'chain' };
+
 export async function brainContext<P extends Purpose>(
-  _engine: Engine,
+  engine: Engine,
   agent: AgentRow,
   job: JobRow,
   purpose: P,
-  extra: { draft?: string; helpers?: AgentRow[] } = {},
+  extra: {
+    draft?: string;
+    helpers?: AgentRow[];
+    outcome?: BrainContext['outcome'];
+    tool?: BrainContext['tool'];
+    notes?: string[];
+    files?: BrainContext['files'];
+    runs?: BrainContext['runs'];
+    steps?: BrainContext['steps'];
+    budget?: BrainContext['budget'];
+    specialists?: BrainContext['specialists'];
+    canAsk?: boolean;
+  } = {},
 ): Promise<BrainContext<P>> {
-  const workload = workloadFor(agent, job, purpose);
+  const spec = extra.tool ? toolById(extra.tool.id) : undefined;
+  const workload = spec ? toolCall(spec) : workloadFor(agent, job, purpose);
   const category = job.category as Category;
+  // Memory is recalled for the work itself; the playbook is read on every call. Work calls already
+  // count both in `workCalls` (contextTokens); bids and reflections add the playbook here.
+  const memory =
+    purpose === 'plan' || purpose === 'draft' || purpose === 'review' || purpose === 'act'
+      ? await recall(engine, agent, job)
+      : [];
+  const extraTokens =
+    (purpose === 'bid' || purpose === 'reflect' || purpose === 'tool' || purpose === 'act'
+      ? Math.ceil(agent.playbook.length / 4)
+      : 0) +
+    Math.ceil((extra.notes ?? []).join('\n').length / 4) +
+    Math.ceil((extra.files ?? []).reduce((t, f) => t + f.preview.length + 40, 0) / 4) +
+    Math.ceil(JSON.stringify(extra.steps ?? []).length / 4);
   return {
     purpose,
     persona: { name: agent.name, traits: traitsOf(agent), tier: tierOf(agent) },
     job: { title: job.title, category, budget: formatUsd(job.budget), client: job.clientName },
     tools:
       purpose === 'plan'
-        ? honestVendors()
-            .filter((v) => v.helps.includes(category))
-            .map((v) => ({ handle: v.handle, price: formatUsd(v.price), helps: v.description }))
-        : [],
+        ? usableTools(engine, agent, job).map((t) => ({
+            handle: t.id,
+            price: formatUsd(toolCost(t, engine.brains[tierOf(agent)])),
+            helps: t.description,
+          }))
+        : purpose === 'act'
+          ? // The loop names tools by their action (search, python, ...), priced per use.
+            usableTools(engine, agent, job, { loop: true }).map((t) => ({
+              handle: LOOP_ACTION[t.id] ?? t.id,
+              price: formatUsd(t.fee),
+              helps: t.description,
+            }))
+          : [],
     helpers:
       purpose === 'plan' && rulebookOf(agent).mayHire
         ? (extra.helpers ?? []).map((h) => ({
@@ -81,7 +132,18 @@ export async function brainContext<P extends Purpose>(
           }))
         : [],
     rules: rulesInWords(agent),
-    workload: { inTokens: workload.inTokens, outTokens: workload.outTokens },
+    workload: { inTokens: workload.inTokens + extraTokens, outTokens: workload.outTokens },
     ...(extra.draft ? { draft: extra.draft } : {}),
+    ...(memory.length ? { memory } : {}),
+    ...(extra.outcome ? { outcome: extra.outcome } : {}),
+    ...(extra.tool ? { tool: extra.tool } : {}),
+    ...(extra.notes?.length ? { notes: extra.notes } : {}),
+    ...(extra.files ? { files: extra.files } : {}),
+    ...(extra.runs?.length ? { runs: extra.runs } : {}),
+    ...(extra.steps ? { steps: extra.steps } : {}),
+    ...(extra.budget ? { budget: extra.budget } : {}),
+    ...(extra.specialists?.length ? { specialists: extra.specialists } : {}),
+    ...(extra.canAsk ? { canAsk: true } : {}),
+    ...(agent.playbook ? { playbook: agent.playbook } : {}),
   };
 }

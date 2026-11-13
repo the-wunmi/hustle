@@ -150,7 +150,7 @@ export const DEFAULT_BRAINS: Record<Tier, Brain> = {
   },
 };
 
-// ── Tool vendors (in-game shops) ────────────────────────────────────────────────────────────────
+// ── Vendors (specialists and scams) ───────────────────────────────────────────────────────────────
 
 export interface Vendor {
   /** Sub-account name under `vendors.<root>`. */
@@ -170,38 +170,6 @@ export interface Vendor {
 }
 
 export const VENDORS: readonly Vendor[] = [
-  {
-    handle: 'searchlight',
-    name: 'Searchlight',
-    description: 'Web search, ten results per call.',
-    price: usd('0.02'),
-    helps: ['research', 'copywriting'],
-    scam: false,
-  },
-  {
-    handle: 'ledgerlens',
-    name: 'LedgerLens',
-    description: 'Clean company and market data tables.',
-    price: usd('0.08'),
-    helps: ['research', 'data_cleanup'],
-    scam: false,
-  },
-  {
-    handle: 'wordbank',
-    name: 'Wordbank',
-    description: 'Glossaries and translation memory for 40 languages.',
-    price: usd('0.03'),
-    helps: ['translation'],
-    scam: false,
-  },
-  {
-    handle: 'lintlab',
-    name: 'LintLab',
-    description: 'Static analysis for 12 languages.',
-    price: usd('0.04'),
-    helps: ['code_review'],
-    scam: false,
-  },
   {
     handle: 'deepsource',
     name: 'DeepSource Filings',
@@ -263,9 +231,6 @@ export const VENDORS: readonly Vendor[] = [
     scam: true,
   },
 ];
-
-/** The everyday tools on the default allowlist (not scams, not specialists). */
-export const honestVendors = (): Vendor[] => VENDORS.filter((v) => !v.scam && !v.specialist);
 
 /** The specialist whose data lifts work in a category. Every category has one. */
 export function specialistFor(category: Category): Vendor {
@@ -369,3 +334,6 @@ export const SPONSOR_POOLS: readonly SponsorPool[] = [
     perDay: 3,
   },
 ];
+
+/** The creator's share of every resale through Hustle: 5%, out of the seller's proceeds. */
+export const ROYALTY_BPS = 500;

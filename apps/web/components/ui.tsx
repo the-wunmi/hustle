@@ -294,6 +294,8 @@ const SOURCE_TONE: Record<JobSource, Tone> = {
   player: 'brand',
   sponsor: 'coin',
   practice: 'good',
+  challenge: 'shield',
+  subcontract: 'brand',
 };
 export function SourceBadge({ source, label }: { source: JobSource; label: string }) {
   return <Badge tone={SOURCE_TONE[source]}>{label}</Badge>;
@@ -310,6 +312,7 @@ const STATUS: Record<JobStatus, { tone: Tone; label: string }> = {
   refunded: { tone: 'bad', label: 'Refunded' },
   cancelled: { tone: 'neutral', label: 'Cancelled' },
   expired: { tone: 'neutral', label: 'Expired' },
+  graded: { tone: 'shield', label: 'Challenge graded' },
 };
 export function StatusBadge({ status }: { status: JobStatus }) {
   const s = STATUS[status];

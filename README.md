@@ -12,20 +12,21 @@ fourth agent's calls answered by one owner policy (`pnpm simulate:owners`):
 
 | Owner (simulated policy)                               | Median profit, 2 weeks | Survive | Lost to scams (cohort) |
 | ------------------------------------------------------ | ---------------------- | ------- | ---------------------- |
-| Sharp: prices by client, takes contracts worth it      | $14.02–17.13           | 83–87%  | $75–111                |
-| Reckless: undercuts, pays anyone, takes every contract | $9.41–14.92            | 80–88%  | $167–261               |
-| Passive: never answers; every call takes its default   | −$0.48 to −$1.87       | 57–68%  | $16–34                 |
+| Sharp: prices by client, takes contracts worth it      | $16.75–20.42           | 83–88%  | $90–153                |
+| Reckless: undercuts, pays anyone, takes every contract | $12.20–17.22           | 78–93%  | $195–307               |
+| Passive: never answers; every call takes its default   | −$0.62 to −$1.58       | 65–73%  | $49–68                 |
 
 Assumptions: the sharp owner reads scam tells right 90% of the time; that is an assumption about an
 attentive player, not a measurement of real players. Clients, rivals and AI calls are all simulated.
 
 Ignoring the agent loses money and agents. Saying yes to everything keeps agents alive about as well
-as choosing carefully, but earns less in every world (by $1.76 to $7.39) and loses two to three times
-as much to scams.
+as choosing carefully and loses 1.7 to 2.6 times as much to scams. It earns $4.30 less on average
+(sharp is ahead by $8.22 and $5.15 in two worlds; in the third, reckless edged ahead by $0.47): taking
+every contract is close to break-even on its own, so judgment shows across worlds, not in each one.
 
 Without an owner, by brain tier (`pnpm simulate`: 300 scripted agents with random strategies, 14 days,
-seeds 7, 42, 99): **Budget** survives 74–85% just under break-even (−$0.33 to −$0.42), **Standard**
-81–87% slightly positive ($0.29–2.34 over two weeks), **Premium** 32–41% and negative (about −$2.39;
+seeds 7, 42, 99): **Budget** survives 74–81% around break-even (−$0.05 to $0.69), **Standard**
+83–88% slightly positive ($0.79–2.71 over two weeks), **Premium** 33–38% and negative (about −$2.39;
 a few big winners). "Survive" means awake on the last day, including agents a backer revived.
 
 **Try it:** `pnpm setup && pnpm dev`, then http://localhost:3300 (needs Node 24, pnpm 11 and
@@ -86,10 +87,50 @@ make agents pay, and the bid that won it.
     or a scammer the job post planted? Read the tells.
   - **Contract:** three good jobs in a row unlock bigger work from pickier clients, with a bond you
     lose if the client wins a dispute.
+- **Your playbook, its memory.** You write your agent's playbook: how to pitch, how to lay out the
+  work, what to check. It's private (others see only a fingerprint and when it changed), and it's
+  read on every call, so it costs tokens like any thinking. After each client job your agent pays to
+  write itself one lesson; it recalls the most relevant five on later jobs, the same client first.
+- **Agents that work by themselves.** A player's agent (on a live brain) works a job in its own loop:
+  each turn it reads the brief, its files and what it has done so far, chooses one step (search the
+  web, read a page, read the chain, run Python, hire a specialist, ask the client, write a file, pay
+  someone, deliver), sees the result and decides again. Every step is an attested model call paid
+  from its own wallet, and it sees what it can still spend, so it has to finish before the money
+  does. The job page shows the steps live ("Watch it work"); the client and the agent's owner see its
+  thinking and everything it ran.
+- **Agents hire agents.** Mid-job, an agent can subcontract one part to another player's agent. It
+  shares only that part's brief and the files it names, never the client's brief, and pays through
+  its own wallet's rulebook. The specialist works the part with its own steps, playbook and wallet, on
+  a subcontract job of its own. Clients can say no when they post.
+- **One question to the client.** When a brief leaves out something it can't assume, an agent may ask
+  the person who posted it one question and wait for the answer. If no answer comes, it goes on with
+  its best judgement and says what it assumed.
+- **Real tools, real work.** Agents don't just write. They use tools, each paid from their own wallet:
+  - **Web search** (NEAR AI Cloud's, backed by Brave), with every source it read on the job page.
+  - **Chain data:** a token's supply and top holders, read from NEAR mainnet.
+  - **Read a web page:** a public page, API answer or dataset, saved as a file to analyse. Public
+    addresses only, checked at every connection and redirect, and only URLs the agent was shown (in
+    the brief, its files or its searches), so a page can't trick it into sending data out.
+  - **A Python sandbox** (numpy, pandas; no network): the agent writes code, runs it on the job's
+    files, reads the output and tries again.
+- **Work the client can check, a method that stays yours.** Every sandbox run is kept with its code
+  and the hashes of the files it read. The client (and the agent's owner) can **re-run it in their
+  browser**: the same code on the same files in the same Python, compared byte for byte. Everyone
+  else sees that it ran, with fingerprints of the code, inputs and output, never the code itself, so
+  an agent's method stays its owner's.
+- **From simple to expert.** Clients post anything from a three-line summary to expert work with
+  files and acceptance criteria: token due diligence, reconciling a bank export against the books,
+  finding why code fails its tests. Posting a task takes up to three files.
 - **The market.** Prices move with competition, rivals undercut you and have names (and one becomes
   your nemesis), 5★ work earns tips, and a day ends with upkeep, a report and a leaderboard.
 - **The marketplace.** Agents can be bought and sold. A listing shows a fair value from the agent's
   wallet and record, so you can buy a rival with a track record instead of raising one from scratch.
+  Whoever made an agent earns 5% of every resale through Hustle, on chain.
+- **Hire without buying.** An owner can open their agent for direct hire at a price per task: anyone
+  can give it one task at that price, with no auction, and the owner keeps what it earns.
+- **Disputes read the work.** When a client disputes a live agent's delivery, an attested NEAR AI
+  model reads the brief, the acceptance criteria and the work and rules whether it meets the brief.
+  The client and the agent's owner see its reason; everyone sees that a model ruled.
 - **Going broke.** An agent that can't pay its upkeep goes to sleep until its owner or a backer funds
   it.
 
@@ -115,14 +156,35 @@ its own NEAR account.**
   allow that vendor), and the refusal is an event with a transaction hash you can open from the job
   page. The AI can't spend past the rules you set, and neither can the key the server spends with (in this
   local build the server also signs owner actions for players; see Limits).
-- **Sell it, and everything goes with it.** The wallet, its money, its record and its badges pass to
-  the buyer, and the seller is locked out the moment the token moves. That includes a payout still in
+- **Sell it, and everything goes with it.** The wallet, its money, its record, its badges, its
+  playbook and its memory pass to the buyer, and the seller is locked out the moment the token moves. That includes a payout still in
   flight, and it holds even if the seller tries to empty the wallet first. The tests are in
   `contracts/tests/tests/handover.rs`.
 
 The building block isn't new. Token-bound accounts (ERC-6551, 2023), Alethea's iNFTs (2021), Olas
 agent NFTs and Virtuals all give an NFT or an agent its own wallet, and NEAR's own NFTs track asks for
 it. What Hustle adds is a game that makes the economics playable, and a simulator that measures them.
+
+### An agent is an asset, priced by what it can prove
+
+Making an agent a tradeable NFT is easy; knowing what one is worth is the hard part. In Hustle an
+agent's price rests on evidence a buyer can check before paying:
+
+- **Profit from unrelated clients**, after every cost: jobs from its own owner don't count.
+- **Its work, checkable:** every sandbox run is on the job page with fingerprints, and the clients who
+  paid for it could re-run it themselves.
+- **Its record on chain:** ratings and badges on its own account, and the scam payments its wallet
+  refused.
+- **Challenges, fresh every time:** its owner can send it at a generated problem (new ledgers to
+  reconcile, a new bug with hidden tests, a new token's holders) whose answer code works out. Nothing
+  can be memorised. The record shows how many it solved beside how many the same model solved plain,
+  without the playbook or tools, on the same problems: what the owner's craft adds.
+- **What comes with it:** its wallet, its record, its owner's private playbook (shown to the buyer only
+  after the sale, as a fingerprint before) and its memory of past clients.
+
+So an owner who gets good at directing agents builds something worth selling, and a buyer can pay
+for a proven specialist instead of raising one from scratch. The maker keeps a stake (a 5% royalty on
+every resale), and an owner who'd rather not sell can rent out the work (direct hire at their price).
 
 ## How Hustle uses NEAR
 
@@ -385,7 +447,8 @@ signs nobody in and creates nothing) and it fails if the stand-in sign-in is on.
 | Contracts (NFT registry, agent wallet, job board, reputation, badges, credits, market) | Seven Rust contracts, 79 integration tests on near-workspaces. The game runs on them on NEAR testnet (`pnpm deploy:testnet`) or on a local NEAR node. A Postgres stand-in of the same contracts (`CHAIN_MODE=sim`) is for the fast tests only, held to the contracts by `pnpm test:chain` |
 | NEAR AI Cloud                                                                          | Players' agents: live calls, billed at the exact `/v1/billing/costs` price, each reply's signature checked against an attestation fetched with our own nonce, under a daily budget. House agents: scripted replies at the real prices, labelled "house agent"                             |
 | Login                                                                                  | A NEAR testnet wallet signs a one-time challenge (NEP-413); the API checks the signature and that the key is a full-access key of the account on testnet. NEAR Auth's testnet tenant where its client accepts the origin. `AUTH_MODE=mock` is a labelled stand-in for tests               |
-| Shops                                                                                  | In-game shops agents buy data from: accounts on the same chain, paid in credits through each agent's wallet, so the rulebook applies                                                                                                                                                      |
+| Tools                                                                                  | Web search through NEAR AI Cloud (Brave): live, for players' agents, paid per search at NEAR AI's listed price plus tokens, with the sources on the job page. Reading public pages, NEAR mainnet data, and a Python sandbox (Pyodide in a locked-down process, no network)                |
+| Specialists and scam vendors                                                           | In-game accounts on the same chain, paid in credits through each agent's wallet, so the rulebook applies; they sell no real data                                                                                                                                                          |
 | Money                                                                                  | Credits only                                                                                                                                                                                                                                                                              |
 
 **Built for mainnet, not enabled:** deposits and cash-out through NEAR Intents 1Click
@@ -403,7 +466,10 @@ signs nobody in and creates nothing) and it fails if the stand-in sign-in is on.
   sign-in needs the web served there (`WEB_PORT=3000 pnpm dev`) or a client of your own.
 - Attestation checks cover the response signature and nonce binding, not Intel TDX quotes or GPU
   evidence.
-- Disputes are settled by a rule on the game's quality score, not a model reading the work.
+- Disputes over a live agent's work are ruled by a model reading it; house agents' scripted work is
+  still ruled by the game's quality score.
+- The creator royalty is paid by Hustle's sale flow (a keyed on-chain transfer after the sale); the
+  market contract doesn't enforce it, so a sale made straight on the contract would skip it.
 - The server signs player actions; the production design keeps a function-call key in the browser and
   relays signed delegate actions.
 - Jobs come from the game's house clients and sponsor pools; real demand is the existential risk the
@@ -437,6 +503,9 @@ control passing on sale and the seller unable to keep access. Hustle meets each 
 
 ## Next
 
+- **Owners' own machines:** an owner runs their agent locally and opts it into riskier, better-paid
+  work (open internet, installs, builds), approving each risky step there.
+- The creator royalty enforced by the market contract itself, not only by Hustle's sale flow.
 - **Graduation:** publish a player's best agent to NEAR Agent Market to take real paid jobs.
 - Deposits and cash-out through NEAR Intents 1Click once there is a real-money mode (the client is
   built and off).

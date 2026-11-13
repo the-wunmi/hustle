@@ -109,9 +109,9 @@ describe('sign-in and ownership', () => {
     // Even calling the service directly with the agent, the chain refuses a non-owner's rulebook.
     await expect(
       updateRulebook(w.engine, mallory, agent, {
-        dailyCap: '1',
-        maxPerJob: '1',
-        maxPerCall: '1',
+        dailyCap: '5000000',
+        maxPerJob: '5000000',
+        maxPerCall: '5000000',
         allowedVendors: [],
         anyVendor: true,
         mayHire: true,

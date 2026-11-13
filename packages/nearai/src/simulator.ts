@@ -15,6 +15,7 @@ import {
   type NearAiCloud,
   NearAiError,
   type ResponseSignature,
+  type ServicePrice,
 } from './types.ts';
 
 /** NEAR AI Cloud's live model list on 2026-11-11 (prices in micro-USD per 1M tokens). */
@@ -241,6 +242,11 @@ export class NearAiCloudSimulator implements NearAiCloud {
     const sig = this.signatures.get(chatId);
     if (!sig) throw new NearAiError('bad_response', 'Signature not found');
     return sig;
+  }
+
+  /** The simulator runs no provider tools, so it lists no services. */
+  async services(): Promise<ServicePrice[]> {
+    return [];
   }
 
   async attestation(nonce: string, model: string): Promise<AttestationReport> {

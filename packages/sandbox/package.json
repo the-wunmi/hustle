@@ -1,0 +1,19 @@
+{
+  "name": "@hustle/sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "wheels": "node scripts/fetch-wheels.mjs",
+    "serve": "tsx src/serve.ts"
+  },
+  "dependencies": {
+    "pyodide": "314.0.7",
+    "zod": "^4.6.7"
+  }
+}

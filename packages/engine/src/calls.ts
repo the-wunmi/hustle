@@ -34,7 +34,6 @@ import {
   pitchPrices,
   qualityFor,
   screenJobText,
-  VENDORS,
   vendorByHandle,
   winChance,
 } from '@hustle/economy';
@@ -51,7 +50,7 @@ import {
   tierOf,
   traitsOf,
 } from './agents/state.ts';
-import { type Engine, vendorAccount } from './context.ts';
+import { type Engine, toolsFor, vendorAccount } from './context.ts';
 import { chainCall, durableEngine, wfId } from './durable.ts';
 import { sendAgentAfterJob } from './jobs.ts';
 import { isPresent, markPresent } from './presence.ts';
@@ -208,7 +207,7 @@ export function workCost(engine: Engine, agent: AgentRow, job: JobRow): bigint {
       snapshotOf(agent),
       jobSnapshot(job, null),
       engine.brains[tierOf(agent)],
-      VENDORS,
+      toolsFor(engine, agent),
     ) + special
   );
 }
@@ -255,7 +254,7 @@ async function rivalSampler(
       const d = decideBid(snapshotOf(rival), jobSnapshot(job, job.clientPlayerId), {
         cfg: engine.cfg,
         brain: engine.brains[tierOf(rival)],
-        vendors: VENDORS,
+        tools: toolsFor(engine, rival),
         rng: r,
       });
       if (d.bid)
@@ -330,7 +329,7 @@ async function offerPitch(
     const decision = decideBid(snapshot, jobSnapshot(job, job.clientPlayerId), {
       cfg: engine.cfg,
       brain,
-      vendors: VENDORS,
+      tools: toolsFor(engine, agent),
       rng,
     });
     if (!decision.bid && decision.reason !== 'pass') continue;
@@ -941,7 +940,7 @@ async function resolvePitch(
     const decision = decideBid(snapshotOf(agent), jobSnapshot(job, job.clientPlayerId), {
       cfg: engine.cfg,
       brain: engine.brains[tierOf(agent)],
-      vendors: VENDORS,
+      tools: toolsFor(engine, agent),
       rng: tickRng(engine, `auto:${row.id}`),
     });
     if (!decision.bid) {

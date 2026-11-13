@@ -20,6 +20,7 @@
     "@hustle/db": "workspace:*",
     "@hustle/economy": "workspace:*",
     "@hustle/nearai": "workspace:*",
+    "@hustle/sandbox": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "zod": "^4.6.7"
   }

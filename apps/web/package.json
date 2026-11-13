@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev -p ${WEB_PORT:-3300}",
-    "build": "next build",
+    "dev": "node scripts/copy-pyodide.mjs && next dev -p ${WEB_PORT:-3300}",
+    "build": "node scripts/copy-pyodide.mjs && next build",
     "start": "next start -p ${WEB_PORT:-3300}",
     "typecheck": "tsc --noEmit"
   },
@@ -16,9 +16,12 @@
     "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "swr": "^2.4.1"
   },
   "devDependencies": {
+    "@hustle/sandbox": "workspace:*",
     "@tailwindcss/postcss": "4.3.5",
     "@types/node": "^24",
     "@types/react": "19.3.0",

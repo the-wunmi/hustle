@@ -23,12 +23,14 @@ import {
   waitForNode,
 } from '@hustle/chain';
 import type { ModesView, Tier } from '@hustle/core';
-import { type Db, settings } from '@hustle/db';
+import { type Db, players, settings } from '@hustle/db';
 import {
   type Brain,
   DEFAULT_BRAINS,
   DEFAULT_ECONOMY,
   type EconomyConfig,
+  TOOLS,
+  type ToolSpec,
   VENDORS,
 } from '@hustle/economy';
 import {
@@ -37,7 +39,9 @@ import {
   type NearAiCloud,
   NearAiCloudClient,
   NearAiCloudSimulator,
+  type ServicePrice,
 } from '@hustle/nearai';
+import { createSandbox, type Sandbox } from '@hustle/sandbox';
 import { eq } from 'drizzle-orm';
 import { ACHIEVEMENTS } from './achievements.ts';
 import { DEFAULT_DAILY_BUDGET_USD, usdToNano } from './brain/budget.ts';
@@ -88,6 +92,17 @@ export interface Engine {
   reserveCheck: () => Promise<string | null>;
   cfg: EconomyConfig;
   brains: Record<Tier, Brain>;
+  /** Tools agents can use, with fees read from the provider's price list at startup where it has one. */
+  tools: readonly ToolSpec[];
+  /** House players' ids: their agents run on the recorded brain, so they never use provider tools. */
+  houseOwners: Set<string>;
+  /** Whether today's live budget can still pay for a tool call; refreshed every tick. */
+  toolsOpen: boolean;
+  /** Where agents' code runs: the isolated sandbox service, or in-process in development; null: none. */
+  sandbox: Sandbox | null;
+  /** Read-only NEAR mainnet endpoints for the chain data tool (public data, never signed with). */
+  mainnetRpcUrl: string;
+  fastNearApiUrl: string;
   modes: ModesView;
   tickMs: number;
   /** Real milliseconds a tick has been taking (a moving average; `tickMs` until measured). */
@@ -124,6 +139,8 @@ export interface EngineOptions {
   walletKeys?: Engine['walletKeys'];
   dailyCaps?: Engine['dailyCaps'];
   reserveCheck?: Engine['reserveCheck'];
+  /** Tests pass their own sandbox (or null for none). */
+  sandbox?: Sandbox | null;
 }
 
 /** Default real milliseconds per world tick. */
@@ -296,6 +313,19 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     .values({ key: BRAINS_KEY, value: storable })
     .onConflictDoUpdate({ target: settings.key, set: { value: storable } });
 
+  // Tool fees from NEAR AI Cloud's price list (nano-USD per unit); the spec's fee if it can't be read.
+  const prices =
+    inferenceMode === 'live' ? await nearai.services().catch((): ServicePrice[] => []) : [];
+  const tools = TOOLS.map((t) => {
+    const live = prices.find((p) => p.service === t.service);
+    return live ? { ...t, fee: (live.costNanoPerUnit + 999n) / 1000n } : t;
+  });
+  const houseOwners = new Set(
+    (await db.select({ id: players.id }).from(players).where(eq(players.isHouse, true))).map(
+      (p) => p.id,
+    ),
+  );
+
   const engine: Engine = {
     db,
     chain,
@@ -319,6 +349,12 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
         Promise.resolve(null)),
     cfg: DEFAULT_ECONOMY,
     brains,
+    tools,
+    houseOwners,
+    toolsOpen: true,
+    sandbox: opts.sandbox !== undefined ? opts.sandbox : createSandbox(env),
+    mainnetRpcUrl: env.NEAR_MAINNET_RPC_URL || 'https://rpc.mainnet.fastnear.com',
+    fastNearApiUrl: env.FASTNEAR_API_URL || 'https://api.fastnear.com',
     modes: {
       chain: chainMode,
       inference: inferenceMode,
@@ -385,6 +421,15 @@ function reviveBrains(value: unknown): Record<Tier, Brain> {
 }
 
 // ── Clock helpers ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The tools this agent will really use: provider tools need a live brain (which house agents never
+ * have) and room in today's tool budget. Bid floors, the per-job cap and quality price only these.
+ */
+export const toolsFor = (engine: Engine, agent: { ownerId: string }): readonly ToolSpec[] =>
+  engine.nearai.mode === 'live' && engine.toolsOpen && !engine.houseOwners.has(agent.ownerId)
+    ? engine.tools
+    : [];
 
 export const dayOf = (engine: Engine, tick = engine.clock.tick): number =>
   Math.floor(tick / engine.dayTicks) + 1;

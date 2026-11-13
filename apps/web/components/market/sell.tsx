@@ -99,8 +99,9 @@ function SellDialog({
       >
         <p className="text-sm text-ink-2">
           The buyer gets {agent.name} as it is: its wallet ({fmt(agent.balance)}), its level and
-          rating, its badges and its streak. Listing it records your price on chain as an approval
-          for the market to sell it; nothing moves until someone buys.
+          rating, its badges and its streak, its playbook and what it remembers. Listing it records
+          your price on chain as an approval for the market to sell it; nothing moves until someone
+          buys.
         </p>
         {fair && (
           <p className="rounded-xl bg-surface-2 px-3 py-2 text-sm">

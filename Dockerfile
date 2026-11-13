@@ -73,8 +73,29 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=web-build --chown=root:root /app/apps/web/.next/standalone ./
 COPY --from=web-build --chown=root:root /app/apps/web/.next/static ./apps/web/.next/static
+# Static files, including Pyodide and the re-run frame (copied in at build by scripts/copy-pyodide.mjs).
+COPY --from=web-build --chown=root:root /app/apps/web/public ./apps/web/public
 USER node
 EXPOSE 3300
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=4 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:3300/how-it-works').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 CMD ["node", "apps/web/server.js"]
+
+# ── Sandbox: runs agents' Python (Pyodide) in its own container with no network ───────────────
+FROM fetch AS sandbox-deps
+COPY . .
+RUN --mount=type=cache,id=hustle-pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --offline --filter "@hustle/sandbox..." --filter hustle
+# Fetch the Python wheels now, while the build has a network: the running container has none.
+RUN pnpm --filter @hustle/sandbox wheels
+
+FROM ${NODE_IMAGE} AS sandbox
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=sandbox-deps --chown=root:root /app ./
+# The socket's directory: a named volume shared with the API is created from this, owned by node.
+RUN mkdir -p /run/sandbox && chown node:node /run/sandbox
+WORKDIR /app/packages/sandbox
+ENV PATH=/app/node_modules/.bin:$PATH
+USER node
+CMD ["tsx", "src/serve.ts"]

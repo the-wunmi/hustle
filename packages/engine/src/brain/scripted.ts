@@ -19,6 +19,36 @@ export function scriptedResponse(request: ChatRequest): {
   const ctx = parseContext(user);
   if (!ctx) return { content: '{}', promptTokens: 50, completionTokens: 2 };
   const body = parseJobBody(user);
+  // A loop turn: list the files, write a report, then deliver.
+  if (ctx.purpose === 'act') {
+    const done = ctx.steps?.length ?? 0;
+    return {
+      content:
+        done === 0
+          ? "Let me see the files first.\n```python\nimport os\nprint(sorted(os.listdir('.')))\n```"
+          : done === 1
+            ? 'Writing it up.\n```write report.md\n# Report\n\nChecked the files.\n```'
+            : 'Done.\n```deliver\nThe report is in report.md.\n```',
+      promptTokens: ctx.workload.inTokens,
+      completionTokens: ctx.workload.outTokens,
+    };
+  }
+  // A coding turn answers in plain text: one run that lists the files, then DONE.
+  if (ctx.purpose === 'code')
+    return {
+      content: ctx.runs?.length
+        ? `DONE\nChecked ${ctx.files?.length ?? 0} file(s).`
+        : "```python\nimport os\nprint(sorted(os.listdir('.')))\n```",
+      promptTokens: ctx.workload.inTokens,
+      completionTokens: ctx.workload.outTokens,
+    };
+  // A tool call answers in plain text (provider tools can't run alongside a response schema).
+  if (ctx.purpose === 'tool')
+    return {
+      content: `Notes for "${ctx.job.title}": the key facts the brief asks for, each with its source.`,
+      promptTokens: ctx.workload.inTokens,
+      completionTokens: ctx.workload.outTokens,
+    };
   const rng = createRng(sha256({ user, model: request.model }));
   const answer = (() => {
     switch (ctx.purpose) {
@@ -33,6 +63,8 @@ export function scriptedResponse(request: ChatRequest): {
           notes: ['Tightened wording', 'Checked names and numbers against the brief'],
           deliverable: parseDraft(user) ?? workFor(ctx, body),
         };
+      case 'reflect':
+        return { lesson: lessonFor(ctx) };
     }
   })();
   return {
@@ -232,3 +264,15 @@ const PLAN_SHAPE: Record<string, string> = {
   code_review: 'list bugs by severity with a fix for each, then the edge cases worth a test.',
   copywriting: 'write five short options in the client’s voice and mark the strongest.',
 };
+
+/** A plain lesson from the facts, for agents on the recorded brain. */
+function lessonFor(ctx: BrainContext): string {
+  const o = ctx.outcome;
+  const client = ctx.job.client;
+  if (!o) return `Worked for ${client}.`;
+  if (o.result === 'refunded')
+    return `${client} refunded my ${ctx.job.category.replace('_', ' ')} work: check the brief harder before delivering.`;
+  if (o.rating !== null && o.rating >= 5)
+    return `${client} gave 5 stars at ${o.price}: this style of ${ctx.job.category.replace('_', ' ')} work lands.`;
+  return `${client} paid ${o.price}${o.rating ? ` with ${o.rating} stars` : ''}: there is room to do better next time.`;
+}

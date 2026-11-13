@@ -5,9 +5,11 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Suspense } from 'react';
 import { MoneyButton } from '@/components/agent-money';
+import { ChallengesPanel } from '@/components/agents/challenges';
 import { DayReports } from '@/components/agents/day-reports';
 import { HolderConsole } from '@/components/agents/holder-console';
 import { NftHistory } from '@/components/agents/nft-history';
+import { MemoryPanel, PlaybookPanel } from '@/components/agents/playbook';
 import { ProofTab } from '@/components/agents/proof';
 import { RulebookEditor } from '@/components/agents/rulebook-editor';
 import {
@@ -25,6 +27,7 @@ import {
 import { STAGE_LABEL, StageTrack } from '@/components/agents/stage-track';
 import { StrategyEditor } from '@/components/agents/strategy-editor';
 import { ConfirmRulebook } from '@/components/market/confirm-rulebook';
+import { HireAgentLink, HireRateControls } from '@/components/market/hire';
 import { SellControls } from '@/components/market/sell';
 import { Portrait } from '@/components/portrait';
 import { TabBar, TabPanel, useTab } from '@/components/tabs';
@@ -47,6 +50,7 @@ import { ApiError, useAgent, useMe } from '@/lib/api';
 const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'work', label: 'Work' },
+  { id: 'playbook', label: 'Playbook' },
   { id: 'wallet', label: 'Wallet & rulebook' },
   { id: 'ownership', label: 'Ownership' },
   { id: 'proof', label: 'Proof' },
@@ -90,6 +94,9 @@ function Profile() {
       <TabBar tabs={TABS} current={tab} label={`${agent.name}'s profile`} />
       {tab === 'overview' && (
         <TabPanel label="Overview">
+          <div className="mb-6 empty:hidden">
+            <HireAgentLink agent={agent} />
+          </div>
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
             <div className="min-w-0 space-y-6">
               <ActivityPanel agent={agent} />
@@ -117,6 +124,18 @@ function Profile() {
           <ActivityHistory agent={agent} />
         </TabPanel>
       )}
+      {tab === 'playbook' && (
+        <TabPanel label="Playbook and memory">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+            <div className="min-w-0 space-y-6">
+              <PlaybookPanel agent={agent} />
+            </div>
+            <div className="min-w-0 space-y-6">
+              <MemoryPanel agent={agent} />
+            </div>
+          </div>
+        </TabPanel>
+      )}
       {tab === 'wallet' && (
         <TabPanel label="Wallet and rulebook">
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
@@ -133,6 +152,22 @@ function Profile() {
       )}
       {tab === 'ownership' && (
         <TabPanel label="Ownership">
+          {agent.creator && (
+            <Panel title="Creator">
+              <p className="text-ink-2">
+                {agent.creator.isMe ? 'You made' : `${agent.creator.name} made`} {agent.name}: its
+                playbook, memory and record started with {agent.creator.isMe ? 'you' : 'them'}.
+                Every resale through Hustle pays {agent.creator.isMe ? 'you' : 'them'}{' '}
+                {agent.creator.royaltyBps / 100}% of the price, on chain, out of the seller's
+                proceeds.
+              </p>
+            </Panel>
+          )}
+          {owner && !agent.needsRulebookConfirm && (
+            <Panel title="Direct hire">
+              <HireRateControls agent={agent} />
+            </Panel>
+          )}
           {owner && !agent.needsRulebookConfirm && (
             <Panel title="Sell">
               <SellControls agent={agent} />
@@ -145,6 +180,7 @@ function Profile() {
       {tab === 'proof' && (
         <TabPanel label="Proof">
           <ProofTab id={agent.id} />
+          <ChallengesPanel agent={agent} />
           <BadgesPanel agent={agent} />
         </TabPanel>
       )}

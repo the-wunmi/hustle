@@ -62,7 +62,9 @@ export type LedgerKind =
   | 'bond_lost'
   /** A player's wallet buying or selling an agent on the marketplace (no agent's own books). */
   | 'agent_purchase'
-  | 'agent_sale';
+  | 'agent_sale'
+  /** The creator's share of a resale: out of the seller's proceeds, into the creator's wallet. */
+  | 'royalty';
 
 export interface LedgerInput {
   /** Makes the entry happen once: a retried step can't double-count. */

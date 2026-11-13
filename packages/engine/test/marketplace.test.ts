@@ -1,9 +1,11 @@
 import { bpsDown, usd } from '@hustle/core';
 import { agentSales, agents, jobs, spends } from '@hustle/db';
+import { ROYALTY_BPS } from '@hustle/economy';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mintAgent, updateRulebook } from '../src/agents/manage.ts';
 import { loadAgent, rulebookOf } from '../src/agents/state.ts';
+import { hireAgent, setHireRate } from '../src/jobs.ts';
 import type { PlayerRow } from '../src/players.ts';
 import {
   buyAgent,
@@ -103,6 +105,70 @@ describe('the agent marketplace', () => {
     const confirmed = await confirmRulebook(w.engine, b, bought, {});
     expect(confirmed).toMatchObject({ frozen: false, awaitingConfirm: false });
     expect((await w.engine.chain.getWallet(agent.accountId!)).frozen).toBe(false);
+  });
+
+  it('a resale pays the creator a royalty on chain, out of the seller’s proceeds; the first sale pays none', async () => {
+    const { owner: maker, agent } = await seller();
+    await listAgent(w.engine, maker, agent, { price: usd('2.00') });
+    const first = await buyer();
+    let bought = await buyAgent(w.engine, first, agent, {
+      expectedPrice: usd('2.00'),
+      requestId: `request-${seq}-r1`,
+    });
+    const [sale1] = await w.engine.db
+      .select()
+      .from(agentSales)
+      .where(eq(agentSales.requestId, `request-${seq}-r1`));
+    expect(sale1?.royalty).toBe(0n);
+    bought = await confirmRulebook(w.engine, first, bought, {});
+    await listAgent(w.engine, first, bought, { price: usd('3.00') });
+    const second = await buyer();
+    const makerBefore = await balance(maker.accountId);
+    const sellerBefore = await balance(first.accountId);
+    await buyAgent(w.engine, second, (await loadAgent(w.engine, agent.id))!, {
+      expectedPrice: usd('3.00'),
+      requestId: `request-${seq}-r2`,
+    });
+    const royalty = bpsDown(usd('3.00'), ROYALTY_BPS);
+    const fee = bpsDown(usd('3.00'), MARKET_FEE_BPS);
+    expect(await balance(maker.accountId)).toBe(makerBefore + royalty);
+    expect(await balance(first.accountId)).toBe(sellerBefore + usd('3.00') - fee - royalty);
+    const [sale2] = await w.engine.db
+      .select()
+      .from(agentSales)
+      .where(eq(agentSales.requestId, `request-${seq}-r2`));
+    expect(sale2?.royalty).toBe(royalty);
+  });
+
+  it('an agent offered for direct hire takes one task at its owner’s price, with no auction', async () => {
+    const { owner, agent } = await seller();
+    const client = await buyer();
+    const task = {
+      title: 'Check my numbers',
+      body: 'Add up the column and say the total.',
+      category: 'research' as const,
+    };
+    await expect(hireAgent(w.engine, client, agent, task)).rejects.toMatchObject({
+      code: 'conflict',
+    });
+    await setHireRate(w.engine, owner, agent, { rate: usd('1.50').toString() });
+    const offered = (await loadAgent(w.engine, agent.id))!;
+    await expect(hireAgent(w.engine, owner, offered, task)).rejects.toMatchObject({
+      code: 'invalid',
+    });
+    const job = await hireAgent(w.engine, client, offered, task);
+    expect(job).toMatchObject({
+      status: 'working',
+      awardedAgentId: agent.id,
+      reservedForAgentId: agent.id,
+      budget: usd('1.50'),
+      price: usd('1.50'),
+      clientPlayerId: client.id,
+    });
+    // Busy now: a second hire waits for it.
+    await expect(
+      hireAgent(w.engine, client, (await loadAgent(w.engine, agent.id))!, task),
+    ).rejects.toMatchObject({ code: 'conflict' });
   });
 
   it('a buy at a stale price is refunded in full: the seller raised the price', async () => {

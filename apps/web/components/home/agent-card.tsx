@@ -3,8 +3,8 @@
 import {
   type AgentView,
   CATEGORY_LABEL,
+  stagesFor,
   traitPhrase,
-  WORK_STAGES,
   type WorkStage,
 } from '@hustle/core/browser';
 import Link from 'next/link';
@@ -20,6 +20,7 @@ const STAGE_LABEL: Record<WorkStage, string> = {
   tools: 'Buying tools',
   helper: 'Hiring help',
   draft: 'Drafting',
+  work: 'Working step by step',
   deliver: 'Delivering',
   review: 'Client review',
   settle: 'Getting paid',
@@ -49,10 +50,12 @@ function useMoneyPops(balance: string) {
 }
 
 export function StageTrack({ stage }: { stage: WorkStage | null }) {
-  const at = stage ? WORK_STAGES.indexOf(stage) : -1;
+  // A job in the agent's loop shows the loop's stages; the rest the pipeline's.
+  const stages = stagesFor(stage === 'work');
+  const at = stage ? stages.indexOf(stage) : -1;
   return (
     <ol className="mt-2 flex gap-1" aria-label="Work stages">
-      {WORK_STAGES.map((s, i) => (
+      {stages.map((s, i) => (
         <li
           key={s}
           className="flex-1"

@@ -142,8 +142,25 @@ export interface BrainSourceView {
   why: 'live' | 'house' | 'no_key' | 'budget_reached';
 }
 
+export interface ChallengeView {
+  id: string;
+  name: string;
+  category: Category;
+  attempts: number;
+  solved: number;
+  plainAttempts: number;
+  plainSolved: number;
+  lastJobId: string | null;
+}
+
 export interface AgentView extends AgentSummaryView {
   ownerAccountId: string;
+  /** Fresh challenges it took, per challenge, beside the same model plain on the same instances. */
+  challenges: ChallengeView[];
+  /** Its owner's price for one task hired directly, or null when it isn't offered. */
+  hireRate: MicroString | null;
+  /** Who made it, and the share of every resale through Hustle they earn (basis points). */
+  creator: { name: string; royaltyBps: number; isMe: boolean } | null;
   brain: BrainSourceView;
   skills: Record<Category, SkillView>;
   strategy: StrategyView;
@@ -176,6 +193,29 @@ export interface AgentView extends AgentSummaryView {
   nemesis: { agent: AgentSummaryView; wins: number } | null;
   /** NEP-245 badges held by the agent's own account (soulbound: they move with the agent). */
   badges: { tokenId: string; title: string; description: string }[];
+  /** The owner's playbook: public as a fingerprint; the text only for its owner. */
+  playbook: {
+    fingerprint: string | null;
+    updatedAt: string | null;
+    chars: number;
+    text: string | null;
+  };
+  /** Lessons it keeps from finished jobs (their text is for its owner: `GET /agents/:id/memory`). */
+  memoryCount: number;
+  /** Tokens the playbook and recalled memory add to each work call. */
+  contextTokens: number;
+}
+
+export interface MemoryView {
+  jobId: string;
+  jobTitle: string;
+  category: Category;
+  client: string;
+  outcome: 'paid' | 'refunded';
+  rating: number | null;
+  price: MicroString;
+  lesson: string | null;
+  tick: number;
 }
 
 export interface BrainView {
@@ -215,7 +255,15 @@ export interface BidView {
 
 /** How a finished job ended, in words a player can act on. */
 export interface SettlementView {
-  kind: 'paid' | 'paid_after_dispute' | 'refunded' | 'outside' | 'expired' | 'cancelled';
+  kind:
+    | 'paid'
+    | 'paid_after_dispute'
+    | 'refunded'
+    | 'judging'
+    | 'graded'
+    | 'outside'
+    | 'expired'
+    | 'cancelled';
   title: string;
   detail: string;
 }
@@ -223,7 +271,17 @@ export interface SettlementView {
 export interface InferenceReceiptView {
   id: string;
   inferenceId: string;
-  purpose: 'bid' | 'plan' | 'draft' | 'review' | 'diary' | 'judge';
+  purpose:
+    | 'bid'
+    | 'plan'
+    | 'draft'
+    | 'review'
+    | 'reflect'
+    | 'tool'
+    | 'code'
+    | 'act'
+    | 'diary'
+    | 'judge';
   model: string;
   tier: Tier;
   promptTokens: number;
@@ -234,6 +292,8 @@ export interface InferenceReceiptView {
   tick: number | null;
   agentName: string;
   createdAt: string;
+  /** For a tool call: the tool, how many times the provider ran it, and the sources it returned. */
+  tool?: { id: string; name: string; uses: number; sources: { title: string; url: string }[] };
 }
 
 export interface VerificationView {
@@ -300,14 +360,85 @@ export interface JobSummaryView {
   createdAt: string;
 }
 
+/** A file a job works on: attached by the client, fetched by one of the agent's tools, or written by the agent. */
+export interface JobFileView {
+  name: string;
+  chars: number;
+  sha256: string;
+  /** client | tool:<id> | agent */
+  source: string;
+}
+
+/**
+ * A sandbox run an agent made for the job, re-runnable in a browser from its code and files. Its code and output are the agent's method: only the job's client and the agent's
+ * owner see them (and can re-run it); everyone else sees that it ran, with fingerprints.
+ */
+export interface SandboxRunView {
+  round: number;
+  agentName: string;
+  /** null unless the viewer is the client or the agent's owner. */
+  code: string | null;
+  stdout: string | null;
+  codeHash: string;
+  /** name → sha256 of each file it read. */
+  inputs: Record<string, string>;
+  /** Whether it stopped with an error (the error text itself stays private, like the output). */
+  failed: boolean;
+  error: string | null;
+  runMs: number;
+  stdoutHash: string;
+  cost: MicroString;
+}
+
+/**
+ * One step of a live agent's loop. Everyone sees what kind of step it was, whether it worked and what
+ * it cost; the thinking, the input (code, query, file) and the result only the client and the agent's
+ * owner see.
+ */
+export interface JobStepView {
+  n: number;
+  action:
+    | 'python'
+    | 'search'
+    | 'chain'
+    | 'fetch'
+    | 'hire'
+    | 'ask'
+    | 'write'
+    | 'pay'
+    | 'deliver'
+    | 'none';
+  /** The step's header: a file written, a payee and amount. */
+  args: string;
+  thought: string | null;
+  input: string | null;
+  observation: string | null;
+  ok: boolean;
+  cost: MicroString;
+  createdAt: string;
+}
+
 export interface JobView extends JobSummaryView {
   body: string;
+  /** A live agent's loop, step by step (empty for a job worked by the fixed pipeline). */
+  steps: JobStepView[];
+  /** What the client said done looks like, if anything. */
+  criteria: string | null;
+  files: JobFileView[];
+  /** Tools the working agent used, with the sources they named. */
+  tools: { id: string; name: string; sources: { title: string; url: string }[] }[];
+  /** The agent's sandbox runs (code and output only for the client and the agent's owner). */
+  runs: SandboxRunView[];
+  /** Whether the viewer may see the method: the code, its output and the client's files. */
+  methodVisible: boolean;
   autoAward: boolean;
   stage: WorkStage | null;
   bids: BidView[];
   deliverable: string | null;
   workHash: string | null;
   embeddedInstructions: string | null;
+  /** The agent's question to the client and the answer (the client and the agent's owner only). */
+  question: { text: string; answer: string | null } | null;
   receipts: InferenceReceiptView[];
   spends: SpendView[];
   txs: ChainTxView[];

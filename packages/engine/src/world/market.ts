@@ -15,12 +15,11 @@ import {
   scoreBid,
   spawnClientJobs,
   spawnSponsorJobs,
-  VENDORS,
 } from '@hustle/economy';
 import { and, eq, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import { type AgentRow, avgRating100, snapshotOf, traitsOf } from '../agents/state.ts';
 import { think } from '../brain/think.ts';
-import { dayOf, type Engine } from '../context.ts';
+import { dayOf, type Engine, toolsFor } from '../context.ts';
 import { isPresent } from '../presence.ts';
 import { post } from '../record.ts';
 import { brainContext } from './context.ts';
@@ -192,7 +191,7 @@ export async function placeBids(engine: Engine, active: AgentRow[]): Promise<voi
           cfg: engine.cfg,
           brain:
             engine.brains[(agent.strategy as { tier: 'budget' | 'standard' | 'premium' }).tier],
-          vendors: VENDORS,
+          tools: toolsFor(engine, agent),
           rng,
         });
         if (!decision.bid) {

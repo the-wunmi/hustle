@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "hire_rate" bigint;

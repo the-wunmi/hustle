@@ -15,6 +15,7 @@ contracts/target
 !.env.example
 
 # Local state
+apps/web/public/pyodide
 .near-sandbox
 *.log
 

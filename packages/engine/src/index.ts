@@ -1,5 +1,7 @@
 export * from './achievements.ts';
+export { challengesOf, takeChallenge } from './agents/challenges.ts';
 export * from './agents/manage.ts';
+export { memoriesOf, playbookFingerprint, setPlaybook } from './agents/memory.ts';
 export * from './agents/state.ts';
 export { AnswerCall, answerCall, callsFor } from './calls.ts';
 export * from './context.ts';

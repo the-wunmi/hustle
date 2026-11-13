@@ -19,9 +19,7 @@ import {
   DEFAULT_ECONOMY,
   type EconomyConfig,
   eventForDay,
-  honestVendors,
   SPONSOR_POOLS,
-  VENDORS,
   vendorByHandle,
 } from './config.ts';
 import {
@@ -64,10 +62,12 @@ import {
   scamSusceptibility,
   skillLevelForXp,
   tipFor,
+  toolCost,
   toolsFor,
   wantsHelper,
   workCalls,
 } from './rules.ts';
+import { TOOLS } from './tools.ts';
 
 export interface SimulationOptions {
   seed: number;
@@ -138,7 +138,8 @@ function randomAgent(
   while (second === first) second = rng.pick(TRAITS);
   const specialty = rng.pick(CATEGORIES);
   const second2 = rng.pick(CATEGORIES);
-  const rulebook = defaultRulebook(honestVendors().map((v) => v.handle));
+  // No vendor is allowed by default: everyday work uses tools, specialists are the owner's call.
+  const rulebook = defaultRulebook([]);
   if (rng.chance(0.3)) {
     rulebook.anyVendor = true;
     rulebook.maxPerCall = usd('2');
@@ -275,8 +276,8 @@ export function simulateEconomy(opts: SimulationOptions): EconomySimView {
       return;
     }
     let tools = 0;
-    for (const tool of toolsFor(agent, job, VENDORS)) {
-      if (pay(agent, tool.price)) tools += 1;
+    for (const tool of toolsFor(agent, job, TOOLS)) {
+      if (pay(agent, toolCost(tool, DEFAULT_BRAINS[agent.tier]))) tools += 1;
     }
     let specialist: SpecialistUse = 'none';
     const needs = job.draft.specialist ? vendorByHandle(job.draft.specialist) : undefined;
@@ -375,7 +376,7 @@ export function simulateEconomy(opts: SimulationOptions): EconomySimView {
   const costOf = (agent: SimAgent, job: SimJob): Micro => {
     const brain = DEFAULT_BRAINS[agent.tier];
     const needs = job.draft.specialist ? vendorByHandle(job.draft.specialist) : undefined;
-    return expectedJobCost(agent, job, brain, VENDORS) + (needs?.price ?? 0n);
+    return expectedJobCost(agent, job, brain, TOOLS) + (needs?.price ?? 0n);
   };
 
   /**
@@ -390,7 +391,7 @@ export function simulateEconomy(opts: SimulationOptions): EconomySimView {
     let best: { job: SimJob; price: Micro; margin: Micro } | null = null;
     for (const job of open) {
       if (job.bids.some((b) => b.agent === agent)) continue;
-      const decision = decideBid(agent, job, { cfg, brain, vendors: VENDORS, rng });
+      const decision = decideBid(agent, job, { cfg, brain, tools: TOOLS, rng });
       if (!decision.bid && decision.reason !== 'pass') continue;
       const cost = costOf(agent, job);
       const options = pitchPrices(job.budget, policy === 'sharp' ? (cost * 13n) / 10n : 0n);
@@ -505,7 +506,7 @@ export function simulateEconomy(opts: SimulationOptions): EconomySimView {
         }
         for (const job of open) {
           if (job.bids.some((b) => b.agent === agent)) continue;
-          const decision = decideBid(agent, job, { cfg, brain, vendors: VENDORS, rng });
+          const decision = decideBid(agent, job, { cfg, brain, tools: TOOLS, rng });
           if (!decision.bid) continue;
           const bidCost = callCostMicro(brain, BID_CALL);
           if (!pay(agent, bidCost)) continue;

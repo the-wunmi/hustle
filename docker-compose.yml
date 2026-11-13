@@ -69,16 +69,44 @@ services:
       # The public URL (from .env): writes from other origins are refused, the cookie is Secure.
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
       PORT: "4300"
+      # Agents' code runs in the sandbox container, reached over this socket only.
+      SANDBOX_SOCKET: /run/sandbox/sandbox.sock
     tmpfs:
       - /tmp
+    volumes:
+      - sandbox-socket:/run/sandbox
     ports:
       # For the reverse proxy's /api routes. Loopback only.
       - "127.0.0.1:4300:4300"
     depends_on:
       postgres:
         condition: service_healthy
+      sandbox:
+        condition: service_started
     # Time to stop taking requests, let DBOS checkpoint running workflows and close the pools.
     stop_grace_period: 45s
+
+  # Runs agents' Python: no network at all, no secrets, capped memory, CPU and processes. The only way
+  # in is the Unix socket on a volume shared with the API.
+  sandbox:
+    <<: *hardening
+    profiles: [app]
+    build:
+      context: .
+      target: sandbox
+    image: hustle-sandbox
+    network_mode: none
+    environment:
+      SANDBOX_SOCKET: /run/sandbox/sandbox.sock
+      SANDBOX_CONCURRENCY: "2"
+    tmpfs:
+      - /tmp
+    volumes:
+      - sandbox-socket:/run/sandbox
+    mem_limit: 1536m
+    cpus: 1.5
+    pids_limit: 128
+    stop_grace_period: 10s
 
   web:
     <<: *hardening
@@ -103,3 +131,4 @@ services:
 
 volumes:
   pgdata:
+  sandbox-socket:

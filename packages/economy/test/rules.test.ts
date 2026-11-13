@@ -1,6 +1,6 @@
 import { CATEGORIES, createRng, defaultRulebook, defaultStrategy, usd } from '@hustle/core';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_BRAINS, DEFAULT_ECONOMY, eventForDay, VENDORS } from '../src/config.ts';
+import { DEFAULT_BRAINS, DEFAULT_ECONOMY, eventForDay } from '../src/config.ts';
 import { gradePractice, movePrice, PRICE_CEIL, scamJob, spawnClientJobs } from '../src/market.ts';
 import {
   type AgentSnapshot,
@@ -8,14 +8,17 @@ import {
   callCostNano,
   decideBid,
   emptySkills,
+  expectedJobCost,
   type JobSnapshot,
   levelForXp,
   overJobCap,
   pickWinner,
   scamSusceptibility,
   screenJobText,
+  toolCost,
   toolsFor,
 } from '../src/rules.ts';
+import { TOOLS } from '../src/tools.ts';
 
 const agent = (over: Partial<AgentSnapshot> = {}): AgentSnapshot => ({
   id: 'a',
@@ -47,7 +50,7 @@ const job = (over: Partial<JobSnapshot> = {}): JobSnapshot => ({
 const ctx = (seed = 1) => ({
   cfg: DEFAULT_ECONOMY,
   brain: DEFAULT_BRAINS.standard,
-  vendors: VENDORS,
+  tools: TOOLS,
   rng: createRng(seed),
 });
 
@@ -117,11 +120,11 @@ describe('economy rules', () => {
     });
     const big = job({ category: 'research', budget: usd('2.50'), body: 'Research this.' });
     const premiumCtx = { ...ctx(), brain: DEFAULT_BRAINS.premium };
-    expect(overJobCap(premium, big, DEFAULT_BRAINS.premium, VENDORS)).toBeGreaterThan(usd('0.40'));
+    expect(overJobCap(premium, big, DEFAULT_BRAINS.premium, TOOLS)).toBeGreaterThan(usd('0.40'));
     expect(decideBid(premium, big, premiumCtx)).toEqual({ bid: false, reason: 'job_cap' });
     // Raising the cap lets it bid.
     const raised = agent({ ...premium, rulebook: { ...defaultRulebook([]), maxPerJob: usd('2') } });
-    expect(overJobCap(raised, big, DEFAULT_BRAINS.premium, VENDORS)).toBeNull();
+    expect(overJobCap(raised, big, DEFAULT_BRAINS.premium, TOOLS)).toBeNull();
   });
 
   it('a screening agent declines a scam without paying to think about it', () => {
@@ -190,20 +193,23 @@ describe('economy rules', () => {
   });
 });
 
-describe('tools an agent buys by itself', () => {
-  it('never include a specialist or a scam, whatever the category', () => {
+describe('tools an agent uses by itself', () => {
+  it('are only tools that help the category, priced at their fee plus the thinking that runs them', () => {
     for (const category of CATEGORIES) {
-      const tools = toolsFor(
+      const used = toolsFor(
         agent({ specialty: category }),
         job({ category, budget: usd('2') }),
-        VENDORS,
+        TOOLS,
       );
-      for (const t of tools) {
-        const v = VENDORS.find((x) => x.handle === t.handle);
-        expect(v?.specialist ?? false).toBe(false);
-        expect(v?.scam).toBe(false);
-      }
+      for (const t of used) expect(t.helps).toContain(category);
     }
+    const search = TOOLS.find((t) => t.id === 'web_search')!;
+    expect(toolCost(search, DEFAULT_BRAINS.standard)).toBeGreaterThan(search.fee);
+    // Research leans on search, so a research job costs more than the same job without it.
+    const research = job({ category: 'research', budget: usd('1') });
+    expect(expectedJobCost(agent(), research, DEFAULT_BRAINS.standard, TOOLS)).toBeGreaterThan(
+      expectedJobCost(agent(), research, DEFAULT_BRAINS.standard, []),
+    );
   });
 });
 

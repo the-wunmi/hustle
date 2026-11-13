@@ -23,8 +23,24 @@ export function usdToNano(usd: string): bigint {
 
 export const utcDay = (now = new Date()): string => now.toISOString().slice(0, 10);
 
-/** Holds `worstNano` of today's budget for one call; false (and today marked spent) if it won't fit. */
-export async function reserveLive(engine: Engine, worstNano: bigint): Promise<string | null> {
+/**
+ * Share of the daily budget tool calls may use (spent and reserved), so searches can't starve the
+ * agents' ordinary thinking.
+ */
+export const TOOL_BUDGET_SHARE_BPS = 5_000n;
+
+/** Left over below this, the day counts as spent: even a small call wouldn't fit. */
+const SMALL_CALL_NANO = 2_000_000n; // $0.002
+
+/**
+ * Holds `worstNano` of today's budget for one call, within `limitNano` (the whole budget, or the
+ * tools' share). Null if it won't fit; the day is marked spent only when not even a small call would.
+ */
+export async function reserveLive(
+  engine: Engine,
+  worstNano: bigint,
+  limitNano: bigint = engine.liveAiBudgetNano,
+): Promise<string | null> {
   const day = utcDay();
   await engine.db.insert(nearaiBudget).values({ day }).onConflictDoNothing();
   const [held] = await engine.db
@@ -37,7 +53,7 @@ export async function reserveLive(engine: Engine, worstNano: bigint): Promise<st
       and(
         eq(nearaiBudget.day, day),
         eq(nearaiBudget.exhausted, false),
-        sql`${nearaiBudget.spentNano} + ${nearaiBudget.reservedNano} + ${worstNano} <= ${engine.liveAiBudgetNano}`,
+        sql`${nearaiBudget.spentNano} + ${nearaiBudget.reservedNano} + ${worstNano} <= ${limitNano}`,
       ),
     )
     .returning({ day: nearaiBudget.day });
@@ -45,8 +61,27 @@ export async function reserveLive(engine: Engine, worstNano: bigint): Promise<st
   await engine.db
     .update(nearaiBudget)
     .set({ exhausted: true, updatedAt: new Date() })
-    .where(eq(nearaiBudget.day, day));
+    .where(
+      and(
+        eq(nearaiBudget.day, day),
+        sql`${nearaiBudget.spentNano} + ${nearaiBudget.reservedNano} + ${SMALL_CALL_NANO} > ${engine.liveAiBudgetNano}`,
+      ),
+    );
   return null;
+}
+
+/** The tools' share of today's budget, in nano-USD. */
+export const toolBudgetNano = (engine: Engine): bigint =>
+  (engine.liveAiBudgetNano * TOOL_BUDGET_SHARE_BPS) / 10_000n;
+
+/**
+ * Whether a tool call can still be paid for today: the day isn't spent and the tools' share has room
+ * for one more typical call. Read once a tick into `engine.toolsOpen`.
+ */
+export async function toolsOpenToday(engine: Engine, typicalNano: bigint): Promise<boolean> {
+  const [row] = await engine.db.select().from(nearaiBudget).where(eq(nearaiBudget.day, utcDay()));
+  if (!row) return toolBudgetNano(engine) >= typicalNano;
+  return !row.exhausted && row.spentNano + row.reservedNano + typicalNano <= toolBudgetNano(engine);
 }
 
 /** Turns a reservation into the call's real cost (the billed amount, or the reserved worst case). */

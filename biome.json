@@ -19,7 +19,8 @@
       "!**/playwright-report",
       "!**/.turbo",
       "!**/*.wasm",
-      "!.near-sandbox"
+      "!.near-sandbox",
+      "!**/public/pyodide"
     ]
   },
   "formatter": {

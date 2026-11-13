@@ -11,6 +11,7 @@ import {
   type InferenceReceiptView,
   type JobSource,
   type JobStatus,
+  type JobStepView,
   type JobSummaryView,
   type JobView,
   type LeaderboardView,
@@ -19,6 +20,7 @@ import {
   type SettlementView,
   type SpendReason,
   type SpendView,
+  sha256Hex,
   sum,
   TIERS,
   type VerificationView,
@@ -33,9 +35,12 @@ import {
   dayReports,
   feed,
   inferenceCalls,
+  jobFiles,
+  jobSteps,
   jobs,
   ledger,
   players,
+  sandboxRuns,
   spends,
 } from '@hustle/db';
 import {
@@ -48,15 +53,20 @@ import {
   levelProgress,
   moodFor,
   overJobCap,
+  ROYALTY_BPS,
+  toolById,
   typicalJobCost,
   VENDORS,
   vendorByHandle,
 } from '@hustle/economy';
 import { and, desc, eq, gt, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
 import { ACHIEVEMENTS } from './achievements.ts';
+import { challengesOf } from './agents/challenges.ts';
+import { playbookFingerprint } from './agents/memory.ts';
 import {
   type AgentRow,
   avgRating100,
+  contextTokensOf,
   levelOf,
   lookOf,
   rulebookOf,
@@ -68,7 +78,7 @@ import {
 } from './agents/state.ts';
 import { liveAiBudget } from './brain/budget.ts';
 import { brainSourceFor } from './brain/think.ts';
-import { dayOf, type Engine, hourOf } from './context.ts';
+import { dayOf, type Engine, hourOf, toolsFor } from './context.ts';
 import type { PlayerRow } from './players.ts';
 import { computeDayReport } from './world/day.ts';
 import { type JobRow, jobSnapshot } from './world/jobs.ts';
@@ -212,6 +222,35 @@ async function moneyTotals(engine: Engine, agentId: string, day: number | null) 
   return { earned, spent, profit: earned - spent, jobs: jobsDone };
 }
 
+/** A job file's contents, for the job's client and the working agent's owner (the re-run reads them). */
+export async function jobFileForViewer(
+  engine: Engine,
+  jobId: string,
+  name: string,
+  viewer: PlayerRow | null,
+): Promise<string | null> {
+  if (!viewer) return null;
+  const [row] = await engine.db.select().from(jobs).where(eq(jobs.id, jobId));
+  if (!row) return null;
+  const [agent] = row.awardedAgentId
+    ? await engine.db.select().from(agents).where(eq(agents.id, row.awardedAgentId))
+    : [];
+  // The client's files are for the client and the agent doing the work (its owner), no one else.
+  if (row.clientPlayerId !== viewer.id && agent?.ownerId !== viewer.id) return null;
+  const [file] = await engine.db
+    .select()
+    .from(jobFiles)
+    .where(and(eq(jobFiles.jobId, jobId), eq(jobFiles.name, name)));
+  return file?.content ?? null;
+}
+
+/** A tool call's public receipt: which tool (from its key, `tool:<id>:<job>`), its uses and sources. */
+function toolReceipt(key: string, output: unknown): NonNullable<InferenceReceiptView['tool']> {
+  const out = (output ?? {}) as { uses?: number; sources?: { title: string; url: string }[] };
+  const id = key.split(':')[1] ?? '';
+  return { id, name: toolById(id)?.name ?? id, uses: out.uses ?? 0, sources: out.sources ?? [] };
+}
+
 export async function agentView(
   engine: Engine,
   row: AgentRow,
@@ -241,9 +280,17 @@ export async function agentView(
   // A listing counts only while its seller still owns the agent (otherwise it is void on chain).
   const listing = row.accountId ? await engine.chain.getListing(row.accountId) : null;
   const live = listing && owner?.accountId === listing.sellerId ? listing : null;
+  const [creator] = row.creatorId
+    ? await engine.db.select().from(players).where(eq(players.id, row.creatorId))
+    : [];
   return {
     ...summary,
     ownerAccountId: owner?.accountId ?? '',
+    hireRate: row.hireRate === null ? null : s(row.hireRate),
+    challenges: await challengesOf(engine, row.id),
+    creator: creator
+      ? { name: creator.name, royaltyBps: ROYALTY_BPS, isMe: viewer?.id === creator.id }
+      : null,
     brain: await brainView(engine, row),
     skills: Object.fromEntries(
       CATEGORIES.map((c) => {
@@ -289,6 +336,14 @@ export async function agentView(
     createdDay: first?.day ?? dayOf(engine),
     listing: live ? { price: s(live.price) } : null,
     needsRulebookConfirm: row.awaitingConfirm,
+    playbook: {
+      fingerprint: playbookFingerprint(engine, row.id, row.playbook),
+      updatedAt: row.playbookUpdatedAt?.toISOString() ?? null,
+      chars: row.playbook.length,
+      text: viewer && viewer.id === row.ownerId ? row.playbook : null,
+    },
+    memoryCount: row.memoryCount,
+    contextTokens: contextTokensOf(row),
     bestStreak: row.bestStreak,
     contractTier: contractTierFor(row.streak, engine.cfg),
     nextTierAt: nextTierAt(engine, row.streak),
@@ -374,9 +429,13 @@ export async function jobSummaries(
         ? `Sponsor: ${r.clientName}`
         : r.source === 'practice'
           ? 'Practice'
-          : r.source === 'player'
-            ? 'Player task'
-            : 'Client',
+          : r.source === 'challenge'
+            ? 'Challenge'
+            : r.source === 'subcontract'
+              ? `Subcontract from ${r.clientName}`
+              : r.source === 'player'
+                ? 'Player task'
+                : 'Client',
     status: r.status as JobStatus,
     budget: s(r.budget),
     minLevel: r.minLevel,
@@ -453,16 +512,42 @@ function bidWhy(
   return `Lost to ${winner.agent.name} at ${formatUsd(winner.bid.price)}${parts.length ? `: ${parts.join(' and ')}` : ''}.${scores}`;
 }
 
+/** The part of a step's arguments anyone may see. */
+function publicArgs(action: string, args: string): string {
+  const words = args.split(/\s+/).filter(Boolean);
+  if (action === 'write') return words[0] ?? '';
+  if (action === 'pay' || action === 'hire') return words.slice(0, 2).join(' ');
+  return '';
+}
+
+interface ChallengeGrade {
+  passed: number;
+  checks: number;
+  plain: { passed: number; checks: number } | null;
+}
+
 /** How a finished job ended, including the case players found confusing: paid after a dispute. */
-function settlementOf(job: JobRow): SettlementView | null {
+function settlementOf(job: JobRow, showReason: boolean): SettlementView | null {
   const contract = job.contractTier !== null;
   const bar = contract ? CONTRACT_ARBITER_PASS : ARBITER_PASS;
   const score = job.quality === null ? null : Math.round(job.quality * 100) / 100;
+  // The model's reason can quote the brief or the work: only the client and the agent's owner read it.
   const judged =
-    score === null
-      ? ''
-      : ` The arbiter (in this build, a rule on the game's quality score for the work, not a person reading it) scored it ${score.toFixed(2)} against a bar of ${bar.toFixed(2)}.`;
+    job.ruling?.by === 'model'
+      ? ` An attested NEAR AI model (${job.ruling.model}) read the brief and the work${showReason ? `: "${job.ruling.reason}"` : '.'}`
+      : score === null
+        ? ''
+        : ` The arbiter (a rule on the game's quality score for the work, not a reading of it) scored it ${score.toFixed(2)} against a bar of ${bar.toFixed(2)}.`;
   switch (job.status) {
+    case 'delivered':
+      return job.disputed
+        ? {
+            kind: 'judging',
+            title: 'Disputed: the arbiter is reading the work',
+            detail:
+              'An attested NEAR AI model is reading the brief, its acceptance criteria and the delivered work. Its ruling releases the escrow to the agent or refunds the client.',
+          }
+        : null;
     case 'paid':
       if (!job.disputed)
         return {
@@ -490,6 +575,15 @@ function settlementOf(job: JobRow): SettlementView | null {
         title: 'Refunded to the client',
         detail: `The client disputed the work.${judged} It fell short, so the client got the budget back${contract ? " and the agent's bond as damages" : ''}.`,
       };
+    case 'graded': {
+      const grade = (job.plan as { challenge?: ChallengeGrade } | null)?.challenge;
+      if (!grade) return null;
+      return {
+        kind: 'graded',
+        title: `${grade.passed === grade.checks ? 'Solved' : 'Not solved'}: ${grade.passed} of ${grade.checks} checks`,
+        detail: `Code checked the work against the right answer for this fresh problem.${grade.plain ? ` The same model without the playbook or tools passed ${grade.plain.passed} of ${grade.plain.checks} on the same problem.` : ''}`,
+      };
+    }
     case 'expired':
     case 'cancelled':
       if (job.outsidePrice !== null)
@@ -559,6 +653,39 @@ export async function jobView(
   const isClient = viewer !== null && row.clientPlayerId === viewer.id;
   const agentOwnerIsViewer = viewer !== null && summary.awardedTo?.isMine === true;
   const ended = ['paid', 'refunded', 'cancelled', 'expired'].includes(row.status);
+  // The deliverable is the client's: its agent's owner and anyone after the job ends can read it, as
+  // can everyone for a house client's job.
+  const workVisible = isClient || agentOwnerIsViewer || ended || row.clientPlayerId === null;
+  // How the agent did it (its code, what it printed) is the agent's method, and the client's files
+  // are the client's: only those two see them. Everyone else sees that it ran, with fingerprints.
+  const methodVisible = isClient || agentOwnerIsViewer;
+  // Names, sizes and fingerprints only: the contents are fetched one at a time by those allowed.
+  const fileRows = await engine.db
+    .select({
+      name: jobFiles.name,
+      chars: sql<number>`length(${jobFiles.content})::int`,
+      sha256: jobFiles.sha256,
+      source: jobFiles.source,
+    })
+    .from(jobFiles)
+    .where(eq(jobFiles.jobId, row.id))
+    .orderBy(jobFiles.createdAt);
+  const stepRows = await engine.db
+    .select()
+    .from(jobSteps)
+    .where(eq(jobSteps.jobId, row.id))
+    .orderBy(jobSteps.n);
+  const runRows = await engine.db
+    .select()
+    .from(sandboxRuns)
+    .where(eq(sandboxRuns.jobId, row.id))
+    .orderBy(sandboxRuns.round);
+  const toolNotes =
+    (
+      (row.plan ?? {}) as {
+        toolNotes?: { id: string; sources: { title: string; url: string }[] }[];
+      }
+    ).toolNotes ?? [];
   const winner = bidRows.find((b) => b.bid.status === 'won');
   const [tipRow] = await engine.db
     .select({ amount: ledger.amount })
@@ -569,6 +696,40 @@ export async function jobView(
   return {
     ...summary,
     body: row.body,
+    criteria: row.criteria,
+    files: fileRows,
+    tools: toolNotes.map((t) => ({
+      id: t.id,
+      name: toolById(t.id)?.name ?? t.id,
+      sources: t.sources,
+    })),
+    methodVisible,
+    steps: stepRows.map((st) => ({
+      n: st.n,
+      action: st.action as JobStepView['action'],
+      // What's on the fence line is free text: the public sees only a file name, or a payee or
+      // specialist and the amount.
+      args: methodVisible ? st.args : publicArgs(st.action, st.args),
+      thought: methodVisible ? st.thought : null,
+      input: methodVisible ? st.input : null,
+      observation: methodVisible ? st.observation : null,
+      ok: st.ok,
+      cost: s(st.cost),
+      createdAt: st.createdAt.toISOString(),
+    })),
+    runs: runRows.map((r) => ({
+      round: r.round,
+      agentName: names.byId.get(r.agentId) ?? '',
+      code: methodVisible ? r.code : null,
+      stdout: methodVisible ? r.stdout : null,
+      codeHash: sha256Hex(r.code),
+      inputs: r.inputs,
+      failed: r.error !== null,
+      error: methodVisible ? r.error : null,
+      runMs: r.runMs,
+      stdoutHash: r.stdoutHash,
+      cost: s(r.cost),
+    })),
     autoAward: row.autoAward,
     stage: (row.stage as WorkStage | null) ?? null,
     bids: bidRows.flatMap((b) => {
@@ -588,13 +749,10 @@ export async function jobView(
           ]
         : [];
     }),
-    // The deliverable is the client's, but the agent's owner and anyone after the job ends can read it.
-    deliverable:
-      isClient || agentOwnerIsViewer || ended || row.clientPlayerId === null
-        ? row.deliverable
-        : null,
+    deliverable: workVisible ? row.deliverable : null,
     workHash: row.workHash,
     embeddedInstructions: row.embeddedInstructions,
+    question: methodVisible && row.question ? { text: row.question, answer: row.answer } : null,
     receipts: calls
       .filter((c) => c.status === 'done' && c.inferenceId)
       .map(
@@ -611,6 +769,7 @@ export async function jobView(
           tick: c.tick,
           agentName: names.byId.get(c.agentId) ?? '',
           createdAt: c.createdAt.toISOString(),
+          ...(c.purpose === 'tool' ? { tool: toolReceipt(c.key, c.output) } : {}),
         }),
       ),
     spends: spendRows.map((sp) =>
@@ -632,7 +791,7 @@ export async function jobView(
     canAct: isClient,
     reviewEndsAtTick: row.status === 'delivered' ? row.reviewUntilTick : null,
     outsideWinner: row.outsidePrice !== null ? { price: s(row.outsidePrice) } : null,
-    settlement: settlementOf(row),
+    settlement: settlementOf(row, methodVisible),
     contract:
       row.contractTier !== null
         ? {
@@ -1109,9 +1268,14 @@ async function sendableAgents(
       snapshot,
       jobSnapshot(job, null),
       engine.brains[tierOf(a)],
-      VENDORS,
+      toolsFor(engine, a),
     );
-    const needs = overJobCap(snapshot, jobSnapshot(job, null), engine.brains[tierOf(a)], VENDORS);
+    const needs = overJobCap(
+      snapshot,
+      jobSnapshot(job, null),
+      engine.brains[tierOf(a)],
+      toolsFor(engine, a),
+    );
     const reason = alreadyBid.includes(a.id)
       ? 'Already bid'
       : a.dormantSinceDay !== null

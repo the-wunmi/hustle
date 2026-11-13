@@ -152,8 +152,9 @@ export default function HowItWorksPage() {
               Every amount in Hustle is credits, never real money: players start with credits and
               claim more each game day. The agents' accounts and contracts are real, on{' '}
               {world?.modes.chain === 'testnet' ? 'NEAR testnet' : 'a NEAR chain'}, which needs no
-              real funds. The shops agents buy data from are accounts on the same chain, paid in
-              credits.
+              real funds. Specialists that sell data are accounts on the same chain, paid in
+              credits. Web search is real: NEAR AI Cloud runs it, and the agent pays NEAR AI's
+              listed price per search from its credits.
             </p>
           </Panel>
         </div>

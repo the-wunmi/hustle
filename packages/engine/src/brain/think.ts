@@ -1,10 +1,12 @@
 import { nanoToMicroCeil, openSecret, sealSecret, sha256Hex } from '@hustle/core';
-import { agents, inferenceCalls, players, spends } from '@hustle/db';
+import { agents, inferenceCalls, spends } from '@hustle/db';
 import { callCostMicro } from '@hustle/economy';
 import {
   type AttestationReport,
   freshNonce,
   NearAiError,
+  type ProviderTool,
+  type ProviderToolResult,
   REASONING_BUDGET,
   verifyCompletion,
 } from '@hustle/nearai';
@@ -13,10 +15,11 @@ import { z } from 'zod';
 import { type AgentRow, refreshBalance, rulebookOf, tierOf } from '../agents/state.ts';
 import { dayOf, type Engine } from '../context.ts';
 import { book, chainKey, post } from '../record.ts';
-import { reserveLive, settleLive } from './budget.ts';
+import { reserveLive, settleLive, toolBudgetNano } from './budget.ts';
 import {
   type BrainContext,
   buildMessages,
+  MAX_TOOL_NOTES,
   OUTPUT,
   type OutputOf,
   type Purpose,
@@ -30,6 +33,24 @@ export type ThinkResult<T> =
       reason: 'funds' | 'capped' | 'unpaid' | 'unverified' | 'provider' | 'invalid_output';
     };
 
+/**
+ * Tools the provider runs during a `tool` call. The agent pays the billed tokens plus `feePerUse`
+ * for each billable use, which the provider bills apart from tokens.
+ */
+export interface CallTools {
+  provider: ProviderTool[];
+  feePerUse: bigint;
+  /** Uses to expect in one call, for the estimate checked against the wallet before calling. */
+  expectedUses: number;
+  /** Billable uses in a call's results. */
+  uses: (results: ProviderToolResult[]) => number;
+  /** The sources a call's results name, kept on the receipt so anyone can check them. */
+  sources: (results: ProviderToolResult[]) => { title: string; url: string }[];
+}
+
+/** Uses reserved against the live AI budget for one tool call (the provider may search more than once). */
+const WORST_TOOL_USES = 3;
+
 /** Most output tokens a call may request: caps the bill no matter what the model wants to write. */
 const MAX_TOKENS = 6_000;
 /**
@@ -38,14 +59,14 @@ const MAX_TOKENS = 6_000;
  */
 const ATTESTATION_TTL_MS = 10 * 60_000;
 
-interface CachedAttestation {
+export interface CachedAttestation {
   nonce: string;
   report: AttestationReport;
   fetchedAt: number;
 }
 const attestations = new WeakMap<Engine, Map<string, CachedAttestation>>();
 
-async function attestationFor(
+export async function attestationFor(
   engine: Engine,
   provider: Engine['nearai'],
   model: string,
@@ -104,11 +125,7 @@ export async function brainSourceFor(
   agent: AgentRow,
 ): Promise<'live' | 'recorded'> {
   if (engine.nearai.mode !== 'live') return 'recorded';
-  const [owner] = await engine.db
-    .select({ isHouse: players.isHouse })
-    .from(players)
-    .where(eq(players.id, agent.ownerId));
-  return owner && !owner.isHouse ? 'live' : 'recorded';
+  return engine.houseOwners.has(agent.ownerId) ? 'recorded' : 'live';
 }
 
 /** Whether the wallet would accept a debit of `estimate` right now; checked before paying a provider. */
@@ -143,6 +160,7 @@ export async function think<P extends Purpose>(
   jobId: string | null,
   ctx: BrainContext<P>,
   jobBody: string,
+  tools?: CallTools,
 ): Promise<ThinkResult<OutputOf<P>>> {
   const [prior] = await engine.db.select().from(inferenceCalls).where(eq(inferenceCalls.key, key));
   if (prior?.status === 'done') {
@@ -158,9 +176,20 @@ export async function think<P extends Purpose>(
     const passed = (prior.verification as { passed?: boolean } | null)?.passed;
     return { ok: false, reason: passed === false ? 'unverified' : 'unpaid' };
   }
+  if (prior?.status === 'in_doubt') {
+    // Already retried once after an interrupted call: a second retry would risk a third bill. The
+    // agent goes without; the provider's charges for the lost tries were never passed on to it.
+    await engine.db
+      .update(inferenceCalls)
+      .set({ status: 'done' })
+      .where(eq(inferenceCalls.id, prior.id));
+    return { ok: false, reason: 'provider' };
+  }
   const tier = tierOf(agent);
   const brain = engine.brains[tier];
-  const estimate = callCostMicro(brain, { purpose: ctx.purpose, ...ctx.workload });
+  const estimate =
+    callCostMicro(brain, { purpose: ctx.purpose, ...ctx.workload }) +
+    (tools?.feePerUse ?? 0n) * BigInt(tools?.expectedUses ?? 0);
   if (!agent.accountId || agent.balance < estimate) return { ok: false, reason: 'funds' };
   if (!(await walletWouldPay(engine, agent, estimate, jobId)))
     return { ok: false, reason: 'capped' };
@@ -174,10 +203,20 @@ export async function think<P extends Purpose>(
       ? ((BigInt(Math.ceil(ctx.workload.inTokens * 1.5)) * brain.inputPerM +
           BigInt(maxTokens) * brain.outputPerM) *
           1000n) /
-        1_000_000n
+          1_000_000n +
+        (tools?.feePerUse ?? 0n) *
+          1000n *
+          BigInt(Math.max(WORST_TOOL_USES, (tools?.expectedUses ?? 0) * 2))
       : 0n;
-  const reservedDay = source === 'live' ? await reserveLive(engine, worstNano) : null;
+  // Tool calls draw on their own share of the day's budget; a refusal closes tools until it frees up.
+  const reservedDay =
+    source === 'live'
+      ? await reserveLive(engine, worstNano, tools ? toolBudgetNano(engine) : undefined)
+      : null;
+  if (tools && !reservedDay) engine.toolsOpen = false;
   const live = source === 'live' && reservedDay !== null;
+  // Provider tools are real work only a live provider does: the recorded brain never stands in.
+  if (tools && !live) return { ok: false, reason: 'provider' };
   const provider = live ? engine.nearai : engine.recordedBrain;
   const settleBudget = async (nano: bigint | undefined) => {
     if (reservedDay) await settleLive(engine, reservedDay, worstNano, nano ?? worstNano);
@@ -219,13 +258,21 @@ export async function think<P extends Purpose>(
       model: brain.model,
       messages: buildMessages(ctx, jobBody),
       max_tokens: maxTokens,
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: SCHEMA_NAME[ctx.purpose],
-          schema: z.toJSONSchema(OUTPUT[ctx.purpose]),
-        },
-      },
+      // Provider tools don't run alongside a response schema, and code reads better outside JSON:
+      // those calls answer in plain text and are parsed here.
+      ...(tools
+        ? { tools: tools.provider }
+        : PLAIN_TEXT[ctx.purpose]
+          ? {}
+          : {
+              response_format: {
+                type: 'json_schema' as const,
+                json_schema: {
+                  name: SCHEMA_NAME[ctx.purpose],
+                  schema: z.toJSONSchema(OUTPUT[ctx.purpose]),
+                },
+              },
+            }),
     });
   } catch (err) {
     if (err instanceof NearAiError) {
@@ -247,7 +294,13 @@ export async function think<P extends Purpose>(
     throw err;
   }
 
-  const nano = (await provider.costs([result.inferenceId]))[result.inferenceId];
+  const tokenNano = (await provider.costs([result.inferenceId]))[result.inferenceId];
+  // The provider bills tool uses apart from tokens (`/v1/billing/costs` leaves them out: verified
+  // 2026-11-13), so they are added at the listed fee.
+  const toolResults = result.toolResults ?? [];
+  const toolUses = tools ? tools.uses(toolResults) : 0;
+  const toolFee = (tools?.feePerUse ?? 0n) * BigInt(toolUses);
+  const nano = tokenNano === undefined ? undefined : tokenNano + toolFee * 1000n;
   await settleBudget(nano);
   // No cost from billing yet: charge the estimate rather than nothing. A zero-cost call still moves
   // one micro-USD, because the wallet refuses zero transfers; the ledger books the same amount.
@@ -323,7 +376,15 @@ export async function think<P extends Purpose>(
     })
     .onConflictDoNothing();
 
-  const parsed = parseOutput(ctx.purpose, result.content);
+  const parsed = tools
+    ? (OUTPUT[ctx.purpose].safeParse({
+        notes: result.content.trim().slice(0, MAX_TOOL_NOTES),
+        sources: tools.sources(toolResults),
+        uses: toolUses,
+      }).data ?? null)
+    : PLAIN_TEXT[ctx.purpose]
+      ? (OUTPUT[ctx.purpose].safeParse(PLAIN_TEXT[ctx.purpose]?.(result.content)).data ?? null)
+      : parseOutput(ctx.purpose, result.content);
   await engine.db
     .update(inferenceCalls)
     .set({
@@ -358,6 +419,93 @@ export async function think<P extends Purpose>(
   });
   if (!parsed) return { ok: false, reason: 'invalid_output' };
   return { ok: true, output: parsed as OutputOf<P>, cost, callId: row.id };
+}
+
+/**
+ * Purposes answered in plain text instead of JSON, with their parser. A coding turn is a fenced
+ * Python block to run, or `DONE` and its notes: models write code far better outside a JSON string
+ * (seen live 2026-11-13: a model escaping code into JSON fell into a repetition loop).
+ */
+const PLAIN_TEXT: Partial<Record<Purpose, (content: string) => unknown>> = {
+  code: parseCodeReply,
+  act: parseActReply,
+};
+
+/**
+ * One loop turn: the thought before the first fenced block, the block's kind (`python`, `search`,
+ * `chain`, `fetch`, `hire <name> <price> [files]`, `ask`, `write <file>`, `pay <payee> <amount>`,
+ * `deliver`) and its text. No block is `none`.
+ */
+export function parseActReply(content: string): {
+  thought: string;
+  action: string;
+  args: string;
+  body: string;
+  cut: boolean;
+} {
+  // Line by line: a block opens with three or more backticks and its kind, and closes only on a line
+  // of at least as many backticks, so a write may hold ``` examples inside a ```` fence. The first
+  // block whose kind is an action counts (a stray ```json before it doesn't spoil the turn).
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const open = /^\s*(`{3,})([a-z]+)[ \t]*(.*)$/i.exec(lines[i] ?? '');
+    if (!open) continue;
+    const kind = (open[2] ?? '').toLowerCase();
+    const action = kind === 'py' ? 'python' : kind;
+    const fence = open[1]?.length ?? 3;
+    let end = i + 1;
+    while (end < lines.length) {
+      const close = /^\s*(`{3,})\s*$/.exec(lines[end] ?? '');
+      if (close && (close[1]?.length ?? 0) >= fence) break;
+      end++;
+    }
+    if (!ACT_KINDS.has(action)) {
+      i = end;
+      continue;
+    }
+    const body = lines.slice(i + 1, end).join('\n');
+    return {
+      thought: lines.slice(0, i).join('\n').trim().slice(0, 1_500),
+      action,
+      args: (open[3] ?? '').trim().slice(0, 200),
+      body: body.slice(0, MAX_ACT_BODY),
+      // No closing fence (the reply hit its length limit), or a body longer than a turn keeps.
+      cut: end >= lines.length || body.length > MAX_ACT_BODY,
+    };
+  }
+  return {
+    thought: content.trim().slice(0, 1_500),
+    action: 'none',
+    args: '',
+    body: '',
+    cut: false,
+  };
+}
+
+const ACT_KINDS = new Set([
+  'python',
+  'search',
+  'chain',
+  'fetch',
+  'hire',
+  'ask',
+  'write',
+  'pay',
+  'deliver',
+]);
+/** Longest action body a turn keeps (an agent's file is at most this long too). */
+const MAX_ACT_BODY = 100_000;
+
+export function parseCodeReply(content: string): { code: string; done: boolean; notes: string } {
+  const block = /```(?:python|py)?[ \t]*\n([\s\S]*?)```/i.exec(content);
+  const code = block?.[1]?.trim() ?? '';
+  // DONE counts only outside the code (a program may well say `DONE = True`).
+  const prose = block ? content.replace(block[0], '') : content;
+  const done = /^\s*DONE\b/im.test(prose) || !code;
+  const notes = (done ? prose.replace(/^[\s\S]*?^\s*DONE\b[:\s]*/im, '') : prose)
+    .trim()
+    .slice(0, 3_000);
+  return { code: done ? '' : code, done, notes };
 }
 
 function parseOutput(purpose: Purpose, content: string): unknown {

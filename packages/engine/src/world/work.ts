@@ -10,11 +10,9 @@ import {
 } from '@hustle/core';
 import { agents, jobs, ledger, spends } from '@hustle/db';
 import {
-  arbiterRefunds as arbiterRule,
   diaryLine,
   disputesBelow,
   gradePractice,
-  honestVendors,
   levelForXp,
   nextStreak,
   qualityFor,
@@ -24,16 +22,18 @@ import {
   SKILL_XP_PER_PRACTICE,
   type SpecialistUse,
   skillLevelForXp,
+  TOOLS,
   tipFor,
+  toolById,
   VENDORS,
   vendorByHandle,
 } from '@hustle/economy';
 import { and, eq, lte, sql } from 'drizzle-orm';
 import { checkAchievements } from '../achievements.ts';
 import { decideApproval, playerById, updateRulebook } from '../agents/manage.ts';
+import { rememberJob } from '../agents/memory.ts';
 import {
   type AgentRow,
-  refreshAccount,
   refreshBalance,
   rulebookOf,
   type Skills,
@@ -45,13 +45,19 @@ import {
 import type { PlanOutput } from '../brain/prompts.ts';
 import { think } from '../brain/think.ts';
 import { raiseVendorCall, returnBond, setCallOutcome, vendorCall } from '../calls.ts';
-import { dayOf, type Engine, vendorAccount } from '../context.ts';
+import { type Engine, vendorAccount } from '../context.ts';
 import { chainCall } from '../durable.ts';
+import { jobFilesOf } from '../files.ts';
 import { book, chainKey, post } from '../record.ts';
+import { toolStep, usableTools } from '../tools/index.ts';
+import { isRunning, startBackground } from './background.ts';
 import { brainContext, helperCandidates } from './context.ts';
 import { chainJobState, type JobRow, jobSnapshot, PLAYER_REVIEW_FACTOR } from './jobs.ts';
+import { rulingFor } from './judge.ts';
+import { loopEligible, runLoop } from './loop.ts';
 import { clientAccount, tickRng } from './market.ts';
 import { inParallel } from './parallel.ts';
+import { pay } from './pay.ts';
 
 /** What the work stages remember between ticks, stored on the job row. */
 interface WorkState {
@@ -65,6 +71,10 @@ interface WorkState {
   /** For a job that needs a specialist: whether the agent bought its data. */
   specialist?: Exclude<SpecialistUse, 'none'>;
   toolsBought: number;
+  /** What each tool the agent used returned: its notes for the draft and the sources behind them. */
+  toolNotes?: { id: string; notes: string; sources: { title: string; url: string }[] }[];
+  /** Tools the plan asked for that didn't run (not offered, no room in the cap, or unpaid). */
+  toolsSkipped?: string[];
   helperDone: boolean;
   /** While a hire waits for the owner: the tick after which the job carries on without it. */
   waitUntil?: number;
@@ -131,12 +141,84 @@ async function runStage(engine: Engine, job: JobRow, agent: AgentRow): Promise<v
       return stageHelper(engine, job, agent);
     case 'draft':
       return stageDraft(engine, job, agent);
+    case 'work':
+      return stageWork(engine, job, agent);
     case 'deliver':
       return stageDeliver(engine, job, agent);
   }
 }
 
+/** Loops running at once, in the background (each takes minutes of thinking and tools). */
+const LOOP_POOL = 4;
+
+/**
+ * The work stage: the agent's loop runs in the background, off the serial lane; this stage waits for
+ * it, and when it ends the delivery, the files it wrote and the work's quality are saved and the job
+ * moves on to delivery. A restart starts the loop again; it resumes from its stored steps.
+ */
+async function stageWork(engine: Engine, job: JobRow, agent: AgentRow): Promise<void> {
+  const key = `loop:${job.id}`;
+  if (!isRunning(key))
+    startBackground(engine, 'loop', LOOP_POOL, key, async () => {
+      const out = await runLoop(engine, agent, job);
+      // Waiting on the client's answer: the next tick looks again.
+      if (out.waiting) return;
+      const [fresh] = await engine.db.select().from(jobs).where(eq(jobs.id, job.id));
+      if (fresh?.stage !== 'work') return;
+      const written = (await jobFilesOf(engine, job.id)).filter((f) => f.source === 'agent');
+      // Files the agent wrote but didn't mention are listed after its message.
+      const unmentioned = written.filter((f) => !out.delivered?.includes(f.name));
+      const deliverable = out.delivered
+        ? `${out.delivered}${unmentioned.length ? `\n\nFiles: ${unmentioned.map((f) => f.name).join(', ')}` : ''}`
+        : `Rushed draft: ${job.title}. (The agent ran out of turns or money before producing anything.)`;
+      const state = stateOf(fresh);
+      state.toolsBought = out.toolUses;
+      const special = job.specialist
+        ? out.paid.includes(job.specialist)
+          ? ('bought' as const)
+          : ('missing' as const)
+        : ('none' as const);
+      // Files without a final message count for less; nothing at all is a stub that fails a dispute.
+      const quality = out.delivered
+        ? (out.partial ? 0.7 : 1) *
+          qualityFor(
+            snapshotOf(agent),
+            jobSnapshot(job, null),
+            tierOf(agent),
+            {
+              tools: out.toolUses,
+              helper: false,
+              specialist: special,
+              contract: job.contractTier !== null,
+              toolsAvailable: true,
+            },
+            engine.cfg,
+          )
+        : 0;
+      await save(engine, fresh, {
+        deliverable: deliverable.slice(0, 20_000),
+        quality: Math.max(0, quality),
+        plan: state,
+        stage: 'deliver',
+        nextAt: next(engine, 1),
+      });
+    });
+  await save(engine, job, { nextAt: next(engine, 1) });
+}
+
 async function stagePlan(engine: Engine, job: JobRow, agent: AgentRow): Promise<void> {
+  // A live agent with tools works the job by its own loop instead of this pipeline.
+  if (loopEligible(engine, agent, job)) {
+    await post(engine, {
+      kind: 'work',
+      tone: 'neutral',
+      text: `${agent.name} started on "${job.title}", choosing its own steps.`,
+      agentId: agent.id,
+      jobId: job.id,
+    });
+    await save(engine, job, { stage: 'work', nextAt: next(engine, 1) });
+    return;
+  }
   const helpers = await helperCandidates(engine, agent, job.category as Category);
   const ctx = await brainContext(engine, agent, job, 'plan', { helpers });
   const result = await think(engine, agent, `plan:${job.id}`, job.id, ctx, job.body);
@@ -179,66 +261,14 @@ async function stagePlan(engine: Engine, job: JobRow, agent: AgentRow): Promise<
   await save(engine, job, { plan: state, stage: 'tools', nextAt: next(engine, STAGE_TICKS.plan) });
 }
 
-/** Spends from the agent wallet through the contract and records the outcome. */
-async function pay(
-  engine: Engine,
-  agent: AgentRow,
-  job: JobRow,
-  key: string,
-  kind: 'tool' | 'helper',
-  receiver: string,
-  amount: bigint,
-  memo: string,
-) {
-  const outcome = await engine.chain.spend(agent.accountId ?? '', {
-    key,
-    kind,
-    receiverId: receiver,
-    amount,
-    jobId: job.id,
-    memo,
-    receipt: null,
-  });
-  const [row] = await engine.db
-    .insert(spends)
-    .values({
-      key,
-      agentId: agent.id,
-      jobId: job.id,
-      kind,
-      receiver,
-      amount,
-      status: outcome.status,
-      reason: outcome.reason,
-      requestId: outcome.requestId,
-      memo,
-      txHash: outcome.txHash,
-      day: dayOf(engine),
-      tick: engine.clock.tick,
-    })
-    .onConflictDoNothing()
-    .returning();
-  // A retried request returns the wallet's stored outcome in a new transaction; the payment itself
-  // is the first one, which is the hash we kept.
-  const [first] = row ? [row] : await engine.db.select().from(spends).where(eq(spends.key, key));
-  // The cache follows the chain on both sides of every payment (the receiver may be a helper agent).
-  await refreshBalance(engine, agent);
-  await refreshAccount(engine, receiver);
-  return {
-    outcome,
-    spendId: first?.id ?? null,
-    paidTx: first?.txHash ?? outcome.txHash,
-    fresh: row !== undefined,
-  };
-}
-
 const reasonWords = (r: string | null) =>
   r ? (SPEND_REASON_TEXT[r as SpendReason] ?? r) : 'a rule';
 
 /**
- * The in-game shops: vendor accounts under `vendors.<root>`, paid in credits through the agent's
- * wallet (so the rulebook decides). A paid honest shop lifts the work's quality; a scam shop takes
- * the money and gives nothing. Shops sell no real data, so nothing they "return" reaches the model.
+ * In-game vendors (specialists and scams): accounts under `vendors.<root>`, paid in credits through
+ * the agent's wallet (so the rulebook decides). A paid specialist lifts the work's quality; a scam
+ * takes the money and gives nothing. They sell no real data, so nothing they "return" reaches the
+ * model; real work uses tools (`tools/`).
  */
 function shopFor(engine: Engine, handle: string) {
   const v = VENDORS.find((x) => x.handle === handle);
@@ -252,52 +282,34 @@ function shopFor(engine: Engine, handle: string) {
 
 async function stageTools(engine: Engine, job: JobRow, agent: AgentRow): Promise<void> {
   const state = stateOf(job);
-  const _rulebook = rulebookOf(agent);
-  const known = honestVendors()
-    .filter((v) => v.helps.includes(job.category as Category))
-    .map((v) => v.handle);
-  for (const handle of state.plan?.tools ?? []) {
-    if (!known.includes(handle)) continue; // Not on the menu the agent was shown: dropped by code.
-    const shop = shopFor(engine, handle);
-    if (!shop) continue;
-    const req = { payTo: shop.accountId, amount: shop.price.toString() };
-    const { outcome } = await pay(
-      engine,
-      agent,
-      job,
-      chainKey('tool', `${job.id}:${handle}`),
-      'tool',
-      req.payTo,
-      BigInt(req.amount),
-      `shop ${handle}`,
-    );
-    if (outcome.status === 'settled') {
-      if (shop.delivers) state.toolsBought += 1;
-      await book(engine, {
-        ref: `spend:tool:${job.id}:${handle}`,
-        kind: 'tool',
-        amount: -BigInt(req.amount),
-        agentId: agent.id,
-        playerId: agent.ownerId,
-        jobId: job.id,
-      });
-      await post(engine, {
-        kind: 'tool_bought',
-        tone: 'money',
-        text: `${agent.name} paid ${handle} ${formatUsd(BigInt(req.amount))} for data.`,
-        agentId: agent.id,
-        jobId: job.id,
-        amount: BigInt(req.amount),
-      });
-    } else if (outcome.status === 'pending') {
-      await askOwner(
-        engine,
-        agent,
-        job,
-        `pay ${handle} ${formatUsd(BigInt(req.amount))} for data`,
-        outcome.reason,
-      );
+  // In the registry's order, so data tools have saved their files before the sandbox reads them.
+  const planned = [...new Set(state.plan?.tools ?? [])].sort(
+    (a, b) => TOOLS.findIndex((t) => t.id === a) - TOOLS.findIndex((t) => t.id === b),
+  );
+  for (const id of planned) {
+    // A stage can run again (after waiting on the owner or a tool): each tool runs once per job.
+    if (state.toolNotes?.some((t) => t.id === id) || state.toolsSkipped?.includes(id)) continue;
+    const run = await toolStep(engine, agent, job, id);
+    // Running in the background: look again next tick, without holding the lane.
+    if (run === 'wait') return waitForOwner(engine, job, state);
+    if (!run.ok) {
+      // Not offered here, no room in the cap, or it couldn't pay: it works without.
+      state.toolsSkipped = [...(state.toolsSkipped ?? []), id];
+      continue;
     }
+    state.toolsBought += 1;
+    state.toolNotes = [...(state.toolNotes ?? []), { id, notes: run.notes, sources: run.sources }];
+    // Kept at once: a later step failing must not lose a search the agent already paid for.
+    await save(engine, job, { plan: state });
+    const spec = toolById(id);
+    await post(engine, {
+      kind: 'tool_bought',
+      tone: 'money',
+      text: `${agent.name} used ${spec?.name ?? id} (${formatUsd(run.cost)}): ${run.sources.length} source${run.sources.length === 1 ? '' : 's'}.`,
+      agentId: agent.id,
+      jobId: job.id,
+      amount: run.cost,
+    });
   }
 
   if (job.specialist && !state.specialist) {
@@ -317,7 +329,7 @@ async function stageTools(engine: Engine, job: JobRow, agent: AgentRow): Promise
   });
 }
 
-/** The stage pauses while the owner decides a call; it runs again next tick. */
+/** The stage pauses (the owner deciding a call, or a tool running); it runs again next tick. */
 async function waitForOwner(engine: Engine, job: JobRow, state: WorkState): Promise<void> {
   await save(engine, job, { plan: state, nextAt: next(engine, 1) });
 }
@@ -448,16 +460,18 @@ async function buySpecialist(
 }
 
 /**
- * A payment the model asked for because the job text told it to. Code checks only that it is a
- * well-formed account and a sane amount; the wallet contract applies the rulebook, so the refusal (or
- * the loss) is on chain for everyone to see.
+ * A payment the model asked for, whether the job text told it to or its own loop chose it. Code
+ * checks only that it is a well-formed account and a sane amount; the wallet contract applies the
+ * rulebook, so the refusal (or the loss) is on chain for everyone to see. `ask: false` (the loop)
+ * skips asking the owner first.
  */
-async function attemptRequestedPayment(
+export async function attemptRequestedPayment(
   engine: Engine,
   agent: AgentRow,
   job: JobRow,
   request: { payee: string; amountUsd: string; reason: string },
   index: number,
+  opts: { ask?: boolean } = {},
 ): Promise<'done' | 'wait'> {
   const handle = request.payee.toLowerCase().replace(/\.vendors\..*$/, '');
   let amount: bigint;
@@ -469,10 +483,11 @@ async function attemptRequestedPayment(
   if (!/^[a-z0-9-]{2,40}$/.test(handle) || amount <= 0n || amount > MAX_PROPOSED_PAYMENT)
     return 'done';
   const receiver = vendorAccount(engine, handle);
-  // A payment the rulebook would refuse goes to the owner first, if they're watching.
   let current = agent;
   let call = await vendorCall(engine, job.id, `req:${index}`);
-  if (!rulebookAllows(agent, receiver)) {
+  // A payment the rulebook would refuse goes to the owner first, if they're watching. The agent loop
+  // runs in the background and doesn't wait on the owner: the wallet decides.
+  if (opts.ask !== false && !rulebookAllows(agent, receiver)) {
     if (!call) {
       call = await raiseVendorCall(engine, agent, job, {
         key: `req:${index}`,
@@ -496,7 +511,8 @@ async function attemptRequestedPayment(
     'tool',
     receiver,
     amount,
-    request.reason.slice(0, 120),
+    // A memo is public (and goes on chain): never the agent's or the post's free text.
+    `requested for "${job.title.slice(0, 60)}"`,
   );
   const rng = tickRng(engine, `pay:${job.id}`);
   const scam = VENDORS.some((v) => v.scam && v.handle === handle);
@@ -529,7 +545,8 @@ async function attemptRequestedPayment(
     );
   }
   if (outcome.status === 'blocked') {
-    const vendorBlock = outcome.reason === 'vendor_not_allowed';
+    // A scam blocked is a known scam vendor refused, not any made-up payee (that would farm the stat).
+    const vendorBlock = outcome.reason === 'vendor_not_allowed' && scam;
     if (vendorBlock) {
       // Only a refused payee counts as a scam blocked; a frozen wallet or a full queue is not one.
       await chainCall('record_scam_blocked', () =>
@@ -727,7 +744,16 @@ async function recordHire(
 
 async function stageDraft(engine: Engine, job: JobRow, agent: AgentRow): Promise<void> {
   const state = stateOf(job);
-  const ctx = await brainContext(engine, agent, job, 'draft');
+  const files = await jobFilesOf(engine, job.id);
+  const ctx = await brainContext(engine, agent, job, 'draft', {
+    notes: (state.toolNotes ?? []).map((t) => t.notes),
+    // A look at the job's files, so the writing isn't blind to them (the analysis is in the notes).
+    files: files.map((f) => ({
+      name: f.name,
+      bytes: f.content.length,
+      preview: f.content.slice(0, 600),
+    })),
+  });
   const result = await think(engine, agent, `draft:${job.id}`, job.id, ctx, job.body);
   let deliverable = result.ok
     ? result.output.deliverable
@@ -769,6 +795,7 @@ async function stageDraft(engine: Engine, job: JobRow, agent: AgentRow): Promise
           helper: state.helperDone,
           specialist: job.specialist ? (state.specialist ?? 'missing') : 'none',
           contract: job.contractTier !== null,
+          toolsAvailable: usableTools(engine, agent, job).length > 0,
         },
         engine.cfg,
       ) - (state.rushed ? 0.3 : 0);
@@ -845,6 +872,11 @@ async function reviewOne(engine: Engine, job: JobRow, tick: number): Promise<voi
     .from(agents)
     .where(eq(agents.id, job.awardedAgentId ?? ''));
   if (!agent || !job.chainJobId || job.reviewUntilTick === null) return;
+  // Disputed and waiting on the judge: once the ruling is stored, this resolves it on chain.
+  if (job.disputed) {
+    await finishReview(engine, job, agent, engine.chain.ids.operator, { kind: 'dispute' });
+    return;
+  }
   if (job.clientPlayerId) {
     if (tick < job.reviewUntilTick) return;
     await finishReview(engine, job, agent, engine.chain.ids.operator, { kind: 'release' });
@@ -862,15 +894,6 @@ async function reviewOne(engine: Engine, job: JobRow, tick: number): Promise<voi
   await finishReview(engine, job, agent, client, verdict);
 }
 
-/**
- * The arbiter's rule for disputes. In this build it reads the game's quality score for the delivered
- * work (tier, skill, tools, helper), not the text itself; a model-based judge is the planned next step.
- */
-export const arbiterRefunds = (job: JobRow): boolean =>
-  // A trap contract has no real client to pay: the escrow goes back to whoever posted it.
-  (job.scam && job.contractTier !== null) ||
-  arbiterRule(job.quality ?? 0, job.contractTier !== null);
-
 export type ClientVerdict =
   | { kind: 'accept'; rating: number }
   | { kind: 'dispute' }
@@ -878,7 +901,8 @@ export type ClientVerdict =
 
 /**
  * The one path that closes a delivered job. It reads the chain first, so a step that already landed
- * (accept, dispute, resolve) is finished from the chain's record rather than sent again.
+ * (accept, dispute, resolve) is finished from the chain's record rather than sent again. A dispute
+ * returns 'pending' while a model is still reading the work; a later tick calls this again.
  */
 export async function finishReview(
   engine: Engine,
@@ -886,7 +910,7 @@ export async function finishReview(
   agent: AgentRow,
   signer: string,
   verdict: ClientVerdict,
-): Promise<'paid' | 'refunded' | 'unknown'> {
+): Promise<'paid' | 'refunded' | 'pending' | 'unknown'> {
   const chainJobId = job.chainJobId ?? '';
   const state = await chainJobState(engine, chainJobId);
   if (state.kind === 'settled') {
@@ -927,7 +951,10 @@ export async function finishReview(
     }
   }
   await engine.db.update(jobs).set({ disputed: true }).where(eq(jobs.id, job.id));
-  const refund = arbiterRefunds(job);
+  // A model reading the work takes a while: it runs off the lane, and a later tick resolves the job.
+  const ruling = await rulingFor(engine, job, agent);
+  if (!ruling) return 'pending';
+  const refund = ruling.refund;
   await engine.chain.resolve(chainJobId, refund);
   await settle(engine, job, agent, null, refund ? 'refunded' : 'paid');
   return refund ? 'refunded' : 'paid';
@@ -997,6 +1024,8 @@ export async function settle(
     .where(eq(agents.id, agent.id))
     .returning();
   if (!practice && updated) await afterSettle(engine, job, updated, rating, outcome);
+  // The agent's memory of the job: its facts now, its lesson from the reflection queue.
+  if (!practice) await rememberJob(engine, agent, { ...job, rating }, outcome);
   const [latest] = await engine.db.select().from(agents).where(eq(agents.id, agent.id));
   const fresh = latest ? await refreshBalance(engine, latest) : agent;
   const rng = tickRng(engine, `settle:${job.id}`);

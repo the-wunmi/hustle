@@ -4,6 +4,7 @@
  * market, which moves the NFT and pays the seller minus the treasury's fee, or refunds the buyer
  * whole. Any change of owner freezes the agent wallet until the new owner confirms its rulebook.
  */
+
 import {
   bpsDown,
   CATEGORIES,
@@ -26,6 +27,7 @@ import {
   agentValue,
   MAX_LISTING_PRICE,
   MIN_LISTING_PRICE,
+  ROYALTY_BPS,
 } from '@hustle/economy';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -231,10 +233,71 @@ async function saleSteps(input: SaleInput): Promise<SaleResult> {
   const agent = await inTx('record sale', (db) =>
     recordSale(engine, db, input, sent.value.txHash, balance),
   );
+  await payRoyalty(engine, input);
   return { kind: 'sold', agent };
 }
 
 export const saleWorkflow = DBOS.registerWorkflow(saleSteps, { name: 'sellAgent' });
+
+/**
+ * The creator's royalty on a resale: `ROYALTY_BPS` of the price, sent on chain from the seller's
+ * proceeds to the creator, keyed by the sale (a retry sends it once). Nothing when the seller is the
+ * creator or no creator is recorded. It is paid by Hustle's sale flow; the market contract itself
+ * doesn't enforce it yet.
+ */
+async function payRoyalty(engine: Engine, sale: SaleInput): Promise<void> {
+  const [agent] = await engine.db.select().from(agents).where(eq(agents.id, sale.agentId));
+  if (!agent?.creatorId || agent.creatorId === sale.sellerId) return;
+  const [seller] = await engine.db.select().from(players).where(eq(players.id, sale.sellerId));
+  const [creator] = await engine.db.select().from(players).where(eq(players.id, agent.creatorId));
+  if (!seller?.accountId || !creator?.accountId) return;
+  const royalty = bpsDown(sale.price, ROYALTY_BPS);
+  if (royalty <= 0n) return;
+  const sent = await chainCall('royalty', () =>
+    engine.chain.ftTransfer(
+      seller.accountId ?? '',
+      creator.accountId ?? '',
+      royalty,
+      `creator royalty: ${agent.name}`,
+      `${sale.key}:royalty`,
+    ),
+  );
+  if (!sent.ok) {
+    engine.log('royalty not paid', { agent: agent.id, code: sent.code });
+    return;
+  }
+  await inTx('record royalty', async (db) => {
+    const [row] = await db
+      .update(agentSales)
+      .set({ royalty })
+      .where(eq(agentSales.requestId, sale.requestId))
+      .returning();
+    if (!row) return;
+    await book(
+      engine,
+      { ref: `sale:royalty-out:${row.id}`, kind: 'royalty', amount: -royalty, playerId: seller.id },
+      db,
+    );
+    await book(
+      engine,
+      { ref: `sale:royalty-in:${row.id}`, kind: 'royalty', amount: royalty, playerId: creator.id },
+      db,
+    );
+    await post(
+      engine,
+      {
+        kind: 'transfer',
+        tone: 'money',
+        text: `${agent.name} was resold for ${formatUsd(sale.price)}: you made it, so you earned a ${formatUsd(royalty)} royalty.`,
+        agentId: agent.id,
+        playerId: creator.id,
+        scope: 'owner',
+        amount: royalty,
+      },
+      db,
+    );
+  });
+}
 
 async function ownerAccount(engine: Engine, agent: AgentRow): Promise<string | null> {
   const [owner] = await engine.db.select().from(players).where(eq(players.id, agent.ownerId));

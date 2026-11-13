@@ -22,7 +22,7 @@ import {
   usd,
 } from '@hustle/core';
 import { agents, backings, players, spends, type Tx } from '@hustle/db';
-import { diaryLine, emptySkills, honestVendors, REVIVE_XP_PENALTY, VENDORS } from '@hustle/economy';
+import { diaryLine, emptySkills, REVIVE_XP_PENALTY, VENDORS } from '@hustle/economy';
 import { and, count, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { dayOf, type Engine, vendorAccount } from '../context.ts';
@@ -116,8 +116,11 @@ export async function anyAgent(engine: Engine, agentId: string): Promise<AgentRo
   return row;
 }
 
-export const knownVendorAccounts = (engine: Engine): string[] =>
-  honestVendors().map((v) => vendorAccount(engine, v.handle));
+/**
+ * Vendors on a new agent's default allowlist: none. Everyday work uses tools (paid as thinking);
+ * specialists are the owner's call, and scams are never allowed.
+ */
+export const knownVendorAccounts = (_engine: Engine): string[] => [];
 
 /**
  * Mints an agent: an NFT whose token id is a new keyless NEAR account that holds the agent's money,
@@ -185,6 +188,7 @@ export async function mintSteps(input: MintInput): Promise<MintResult> {
       .values({
         id: agentId,
         ownerId: owner.id,
+        creatorId: owner.id,
         name: data.name,
         look: data.look,
         traits: data.traits,
