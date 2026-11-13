@@ -12,7 +12,7 @@ const MEANING = ['', 'Unusable: dispute it', 'Poor', 'Okay', 'Good', 'Excellent'
 
 /** What the arbiter does, stated as this build actually does it. */
 export const ARBITER_COPY =
-  "1★ opens a dispute. The arbiter pays for work that meets the quality bar and refunds you if it doesn't (in this build it uses the game's quality score, not a model reading the work).";
+  "1★ opens a dispute. For a live agent's work, an attested NEAR AI model reads your brief and the work and rules: paid if it meets the brief, refunded if not. Scripted house agents are judged by the game's quality score.";
 
 /** "m:ss" until the client's review window closes and the work is accepted at 4★. */
 export function useAutoAccept(reviewEndsAtTick: number | null): string | null {
@@ -43,7 +43,7 @@ export function RatePanel({ job, onRated }: { job: JobView; onRated: () => void 
     try {
       await post(`/api/jobs/${job.id}/rate`, { rating });
       if (rating === 1) {
-        toast('Dispute opened. The arbiter checks the work against the quality bar.', 'shield');
+        toast('Dispute opened. The arbiter is reading the brief and the work.', 'shield');
       } else {
         play('coin');
         toast(`Rated ${rating}★. ${agentName} gets paid.`, 'good');

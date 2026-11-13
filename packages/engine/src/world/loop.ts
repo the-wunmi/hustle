@@ -384,17 +384,25 @@ async function perform(
       return dear ?? hire(engine, agent, job, n, act);
     }
     case 'write': {
-      const name = act.args.split(/\s+/)[0] ?? '';
-      if (!isAgentFileName(name))
+      // The name belongs on the fence line; models sometimes put it on the block's first line instead.
+      const firstLine = act.body.split('\n')[0]?.trim() ?? '';
+      const named = !act.args.trim() && isAgentFileName(firstLine);
+      const asked = named ? firstLine : (act.args.split(/\s+/)[0] ?? '');
+      if (named) act.body = act.body.split('\n').slice(1).join('\n');
+      if (!isAgentFileName(asked))
         return no(
-          `"${name}" isn't a file name it can write (letters, digits, ._- and a text extension).`,
+          `"${asked}" isn't a file name it can write (letters, digits, ._- and a text extension).`,
         );
       if (act.body.length > MAX_AGENT_FILE_CHARS) return no('That file is too big.');
+      // A corrected version of one of the client's files is kept beside the original, which stays
+      // exactly as the client sent it.
+      const clients = (await jobFilesOf(engine, job.id)).filter((f) => f.source !== 'agent');
+      const name = clients.some((f) => f.name === asked) ? `fixed_${asked}` : asked;
+      if (!isAgentFileName(name) || clients.some((f) => f.name === name))
+        return no(`${asked} is one of the job's own files; write your version under another name.`);
       const mine = (await jobFilesOf(engine, job.id)).filter((f) => f.source === 'agent');
       if (!mine.some((f) => f.name === name) && mine.length >= MAX_AGENT_FILES)
         return no(`It has written ${MAX_AGENT_FILES} files already.`);
-      const clients = (await jobFilesOf(engine, job.id)).filter((f) => f.source !== 'agent');
-      if (clients.some((f) => f.name === name)) return no(`${name} is one of the job's own files.`);
       // A file a sandbox run read stays as it was, so that run can still be re-run and checked.
       const runs = await engine.db
         .select({ inputs: sandboxRuns.inputs })
@@ -405,7 +413,10 @@ async function perform(
       await saveJobFile(engine, job.id, name, act.body, 'agent', { replace: true });
       return {
         ok: true,
-        observation: `Saved ${name} (${act.body.length.toLocaleString('en')} characters).`,
+        observation:
+          name === asked
+            ? `Saved ${name} (${act.body.length.toLocaleString('en')} characters).`
+            : `Saved as ${name} (${act.body.length.toLocaleString('en')} characters): ${asked} is the client's original, kept as it was.`,
         cost: 0n,
       };
     }

@@ -365,7 +365,7 @@ async function start() {
     console.log(
       `\x1b[0m\n${'─'.repeat(64)}\nYour agent wants to run this for "${printable(task.jobTitle)}"`,
     );
-    console.log(`In a container that sees only ${folder}`);
+    console.log(`In a container that sees only ${folder.replace(homedir(), '~')}`);
     console.log(
       `Its files (from the client and your agent): ${task.files.map((f) => printable(f.name)).join(', ') || 'none'}`,
     );
@@ -403,7 +403,13 @@ async function start() {
       result = { exitCode: -1, output: err.message };
     }
     if (name) {
-      result = await run('docker', ['exec', '-w', '/work', name, 'sh', '-c', task.command], {});
+      // Plain output: colour codes would only show up escaped (control characters are never printed raw).
+      const plain = ['-e', 'NO_COLOR=1', '-e', 'FORCE_COLOR=0', '-e', 'TERM=dumb', '-e', 'CI=1'];
+      result = await run(
+        'docker',
+        ['exec', ...plain, '-w', '/work', name, 'sh', '-c', task.command],
+        {},
+      );
       // Stopped after every command: nothing it left running carries on, and nothing can move
       // in the folder while the runner reads it. The next command starts it again.
       docker(['kill', name]);

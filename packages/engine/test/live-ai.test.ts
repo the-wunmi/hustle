@@ -845,4 +845,69 @@ describe('live NEAR AI for players only, under a daily budget', () => {
     expect(await runnerFor(w.engine, token)).toBeNull();
     expect(await runnerOnline(w.engine, mine.id)).toBe(false);
   });
+
+  it('a write whose file name sits on the block’s first line is still saved under that name', async () => {
+    w.engine.liveAiBudgetNano = usdToNano('1.00');
+    w.engine.toolsOpen = true;
+    const mine = await playerAgent();
+    const job = await aJob('research');
+    actScript.push(
+      `Writing it.\n${BT}write\nnotes.md\n# Notes\nDone.\n${BT}`,
+      `${BT}deliver\nSee notes.md.\n${BT}`,
+    );
+    const [bid] = await w.engine.db
+      .insert(bids)
+      .values({
+        jobId: job.id,
+        agentId: mine.id,
+        price: usd('0.70'),
+        pitch: 't',
+        status: 'open',
+        createdTick: 0,
+      })
+      .returning();
+    await awardJob(w.engine, job, bid!.id);
+    for (let i = 0; i < 4; i++) {
+      await w.engine.db.update(jobs).set({ nextAt: 0 }).where(eq(jobs.id, job.id));
+      await advanceWork(w.engine);
+      await backgroundIdle();
+    }
+    const files = await w.engine.db.select().from(jobFiles).where(eq(jobFiles.jobId, job.id));
+    expect(files.find((f) => f.name === 'notes.md')?.content).toBe('# Notes\nDone.');
+  }, 120_000);
+
+  it('a fixed version of a client file is saved beside the original, which stays as sent', async () => {
+    w.engine.liveAiBudgetNano = usdToNano('1.00');
+    w.engine.toolsOpen = true;
+    const mine = await playerAgent();
+    const job = await aJob('research');
+    await saveJobFile(w.engine, job.id, 'calc.js', 'export const f = () => 1;\n', 'client');
+    actScript.push(
+      `Fixing it.\n${BT}write calc.js\nexport const f = () => 2;\n${BT}`,
+      `${BT}deliver\nFixed in fixed_calc.js.\n${BT}`,
+    );
+    const [bid] = await w.engine.db
+      .insert(bids)
+      .values({
+        jobId: job.id,
+        agentId: mine.id,
+        price: usd('0.70'),
+        pitch: 't',
+        status: 'open',
+        createdTick: 0,
+      })
+      .returning();
+    await awardJob(w.engine, job, bid!.id);
+    for (let i = 0; i < 4; i++) {
+      await w.engine.db.update(jobs).set({ nextAt: 0 }).where(eq(jobs.id, job.id));
+      await advanceWork(w.engine);
+      await backgroundIdle();
+    }
+    const files = await w.engine.db.select().from(jobFiles).where(eq(jobFiles.jobId, job.id));
+    expect(files.find((f) => f.name === 'calc.js')?.content).toContain('=> 1');
+    expect(files.find((f) => f.name === 'fixed_calc.js')).toMatchObject({ source: 'agent' });
+    const steps = await w.engine.db.select().from(jobSteps).where(eq(jobSteps.jobId, job.id));
+    expect(steps[0]).toMatchObject({ action: 'write', ok: true });
+    expect(steps[0]!.observation).toMatch(/Saved as fixed_calc\.js/);
+  }, 120_000);
 });
