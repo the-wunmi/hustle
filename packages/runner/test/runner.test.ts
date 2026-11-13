@@ -30,7 +30,7 @@ describe('the runner on an owner’s computer', () => {
       args: ['ABCD-EFGH'],
       flags: { server: 'http://x' },
     });
-    expect(parseArgs(['start', '--no-container']).flags).toEqual({ 'no-container': true });
+    expect(parseArgs(['start', '--verbose']).flags).toEqual({ verbose: true });
   });
 
   it('keeps every job inside its own folder, whatever id the server sends', () => {
@@ -110,7 +110,8 @@ describe('the runner on an owner’s computer', () => {
   });
 
   it('shows control characters escaped, so a command can’t disguise itself', () => {
-    expect(printable('ls\u001b[2K\u001b[1Grm -rf ~')).toBe('ls\\x1b[2K\\x1b[1Grm -rf ~');
+    expect(printable('rm\u202e -rf')).toBe('rm\\u{202e} -rf');
+    expect(printable('ls\u001b[2K\u001b[1Grm -rf ~')).toBe('ls\\u{1b}[2K\\u{1b}[1Grm -rf ~');
     expect(printable('line one\n\tline two')).toBe('line one\n\tline two');
   });
 });

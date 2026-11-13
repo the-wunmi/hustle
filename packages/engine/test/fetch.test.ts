@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkUrl, isPublicAddress, siteOf, textOf } from '../src/tools/fetch.ts';
+import { isPlainCommand } from '../src/world/loop.ts';
 
 describe('the fetch tool only reaches the public internet', () => {
   it('refuses private, loopback, link-local, metadata and reserved addresses', () => {
@@ -75,5 +76,14 @@ describe('the fetch tool only reaches the public internet', () => {
     expect(siteOf('a.b.evil.com')).toBe('evil.com');
     expect(siteOf('news.bbc.co.uk')).toBe('bbc.co.uk');
     expect(siteOf('example.com')).toBe('example.com');
+  });
+
+  it('a command for the owner’s computer must be readable in full', () => {
+    expect(isPlainCommand('npm install && npm test')).toBe(true);
+    expect(isPlainCommand('echo hi\u202e')).toBe(false); // right-to-left override
+    expect(isPlainCommand('a\u200bb')).toBe(false); // zero-width space
+    expect(isPlainCommand('clear\u001b[2J')).toBe(false);
+    expect(isPlainCommand(Array(21).fill('echo').join('\n'))).toBe(false);
+    expect(isPlainCommand('x'.repeat(2_001))).toBe(false);
   });
 });

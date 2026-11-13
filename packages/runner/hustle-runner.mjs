@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 // Hustle runner: lets your Hustle agent run commands on this computer, each one only after you say
 // yes here. Your agent still thinks (and pays for its thinking) on Hustle; this script only collects
-// the commands it asks for, shows you each one, runs the ones you allow inside a throwaway Docker
-// container that sees only that job's folder, and sends back what they printed and the text files
+// the commands it asks for, shows you each one, runs the ones you allow inside a Docker
+// container for that job that sees only its folder, and sends back what they printed and the text files
 // they made. It holds no keys and no wallet: only the token from pairing, in ~/.hustle-runner.
 //
 //   node hustle-runner.mjs pair ABCD-EFGH [--server https://hustle.clanker.show]
-//   node hustle-runner.mjs start [--no-container]
+//   node hustle-runner.mjs start
 //   node hustle-runner.mjs clean
 //
-// Needs Node 20+ and Docker (it fetches a small Node image once) (or --no-container, which runs commands directly on this computer).
+// Needs Node 20+ and Docker (it fetches a small Node image once). Commands never run outside a container.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -182,8 +182,8 @@ export function changedFiles(folder, since) {
 export function printable(text) {
   return String(text).replace(
     // biome-ignore lint/suspicious/noControlCharactersInRegex: finding control characters is the point.
-    /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g,
-    (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`,
+    /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]|\p{Cf}/gu,
+    (c) => `\\u{${c.codePointAt(0).toString(16)}}`,
   );
 }
 
@@ -313,16 +313,12 @@ async function pair(code, server) {
   console.log('Paired. Start it with: node hustle-runner.mjs start');
 }
 
-async function start(flags) {
+async function start() {
   const config = loadConfig();
-  const contained = !flags['no-container'];
-  if (contained && !hasDocker())
-    throw new Error(
-      'Docker is not running. Start Docker, or use --no-container (commands then run directly on this computer).',
-    );
-  if (!contained)
-    console.log('\n!! --no-container: approved commands run directly on this computer, as you.\n');
-  if (contained && docker(['image', 'inspect', IMAGE]).status !== 0) {
+  // Commands run only in a container: the job's files come from a stranger, and installing or
+  // building runs code from them.
+  if (!hasDocker()) throw new Error('Docker is not running. Start Docker, then run this again.');
+  if (docker(['image', 'inspect', IMAGE]).status !== 0) {
     console.log(`Getting the ${IMAGE} image the commands run in (once; under 100 MB)…`);
     const pulled = spawnSync('docker', ['pull', IMAGE], { stdio: 'inherit' });
     if (pulled.status !== 0) throw new Error(`Couldn't pull ${IMAGE}.`);
@@ -369,23 +365,24 @@ async function start(flags) {
     console.log(
       `\x1b[0m\n${'─'.repeat(64)}\nYour agent wants to run this for "${printable(task.jobTitle)}"`,
     );
+    console.log(`In a container that sees only ${folder}`);
     console.log(
-      contained
-        ? `In a container that sees only ${folder}\n`
-        : `Directly on this computer, in ${folder}\n`,
+      `Its files (from the client and your agent): ${task.files.map((f) => printable(f.name)).join(', ') || 'none'}`,
     );
+    console.log('Installing or building can run code from those files, inside the container.\n');
     console.log(
       task.command
         .split('\n')
         .map((l) => `    ${printable(l)}`)
         .join('\n'),
     );
+    const lines = task.command.split('\n').length;
     let answer = (allowed.get(task.jobId) ?? 0) > Date.now() ? 'a' : '';
     if (answer) console.log('\n(allowed: you said yes to the rest of this job)');
     while (!['y', 'n', 'a'].includes(answer))
       answer = (
         await rl.question(
-          '\x1b[0m\nRun it? [y] yes  [n] no  [a] yes, and to this job for 30 minutes: ',
+          `\x1b[0m\nRun the ${lines} line${lines === 1 ? '' : 's'} above? [y] yes  [n] no  [a] yes, and to this job for 30 minutes: `,
         )
       )
         .trim()
@@ -399,24 +396,17 @@ async function start(flags) {
       allowed.set(task.jobId, Date.now() + ALLOW_FOR_MS);
     const startedAt = Date.now() - 1_000;
     let result;
-    if (contained) {
-      let name;
-      try {
-        name = ensureContainer(task.jobId, folder);
-      } catch (err) {
-        result = { exitCode: -1, output: err.message };
-      }
-      if (name) {
-        result = await run('docker', ['exec', '-w', '/work', name, 'sh', '-c', task.command], {});
-        // Stopped after every command: nothing it left running carries on, and nothing can move
-        // in the folder while the runner reads it. The next command starts it again.
-        docker(['kill', name]);
-      }
-    } else {
-      result = await run('sh', ['-c', task.command], {
-        cwd: folder,
-        env: { PATH: process.env.PATH, HOME: folder },
-      });
+    let name;
+    try {
+      name = ensureContainer(task.jobId, folder);
+    } catch (err) {
+      result = { exitCode: -1, output: err.message };
+    }
+    if (name) {
+      result = await run('docker', ['exec', '-w', '/work', name, 'sh', '-c', task.command], {});
+      // Stopped after every command: nothing it left running carries on, and nothing can move
+      // in the folder while the runner reads it. The next command starts it again.
+      docker(['kill', name]);
     }
     const files = changedFiles(folder, startedAt);
     if (await report({ id: task.id, approved: true, ...result, files }))
@@ -438,7 +428,7 @@ async function main() {
   const { command, args, flags } = parseArgs(process.argv.slice(2));
   if (command === 'pair')
     return pair(args[0], typeof flags.server === 'string' ? flags.server : DEFAULT_SERVER);
-  if (command === 'start') return start(flags);
+  if (command === 'start') return start();
   if (command === 'clean') return clean();
   console.log(
     readFileSync(fileURLToPath(import.meta.url), 'utf8')

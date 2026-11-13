@@ -205,6 +205,16 @@ export async function runLoop(engine: Engine, agent: AgentRow, job: JobRow): Pro
 /** Steps that threw once in this process: the next throw is recorded instead of retried. */
 const thrownOnce = new Set<string>();
 
+/** A command an owner can read in full: plain characters, 20 lines, 2,000 characters at most. */
+export function isPlainCommand(command: string): boolean {
+  return (
+    command.length <= 2_000 &&
+    command.split('\n').length <= 20 &&
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: finding control characters is the point.
+    !/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]|\p{Cf}/u.test(command)
+  );
+}
+
 /** One question per job, and only to a client who is a person (house clients never answer). */
 async function mayAsk(engine: Engine, job: JobRow): Promise<boolean> {
   if (job.source !== 'player' || !job.clientPlayerId) return false;
@@ -332,12 +342,14 @@ async function perform(
       };
     }
     case 'shell': {
-      const command = act.body.trim().slice(0, 4_000);
+      const command = act.body.trim();
       if (!command) return no('The shell block was empty.');
-      // Control characters could disguise a command on the owner's screen.
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: finding control characters is the point.
-      if (/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(command))
-        return no('A command may not contain control characters.');
+      // The owner must see exactly what runs: no control, invisible or direction-changing characters,
+      // and short enough to read in one screen.
+      if (!isPlainCommand(command))
+        return no(
+          'A command must be plain text (no control or invisible characters), at most 20 lines and 2,000 characters.',
+        );
       if (!job.localOk)
         return no("The client didn't allow work on its owner's computer for this job.");
       if (!(await runnerOnline(engine, agent.id)))
