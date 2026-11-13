@@ -26,13 +26,13 @@ const config: NextConfig = {
       {
         // The re-run frame runs code the viewer didn't write: it may load scripts and fetch only
         // from this site (Pyodide), start its blob worker, and nothing else; and it is sandboxed
-        // even if opened on its own.
+        // even if opened on its own; only this site's pages may frame it.
         source: '/rerun/:path*',
         headers: [
           {
             key: 'Content-Security-Policy',
             value:
-              "sandbox allow-scripts; default-src 'none'; script-src 'self' blob: 'wasm-unsafe-eval'; worker-src blob:; connect-src 'self'",
+              "sandbox allow-scripts; default-src 'none'; script-src 'self' blob: 'wasm-unsafe-eval'; worker-src blob:; connect-src 'self'; frame-ancestors 'self'",
           },
         ],
       },
