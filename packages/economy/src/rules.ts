@@ -80,12 +80,12 @@ export function levelForXp(xp: number, cfg: EconomyConfig): number {
   return level;
 }
 
-/** Progress to the next level, 0–100; 100 at the top level. */
-export function levelProgress(xp: number, cfg: EconomyConfig): number {
+/** Progress to the next level, 0–100; null at the top level, where there is no next one. */
+export function levelProgress(xp: number, cfg: EconomyConfig): number | null {
   const level = levelForXp(xp, cfg);
   const from = cfg.levelXp[level - 1] ?? 0;
   const to = cfg.levelXp[level];
-  if (to === undefined) return 100;
+  if (to === undefined) return null;
   return Math.floor(((xp - from) * 100) / (to - from));
 }
 
@@ -247,6 +247,20 @@ export function expectedJobCost(
   return total;
 }
 
+/**
+ * What a job's thinking and tools cost, its pitch included, when the agent's own rulebook caps a job
+ * below that (the wallet would refuse the draft halfway through); null when the rulebook covers it.
+ */
+export function overJobCap(
+  agent: AgentSnapshot,
+  job: JobSnapshot,
+  brain: Brain,
+  vendors: Parameters<typeof toolsFor>[2],
+): Micro | null {
+  const needs = expectedJobCost(agent, job, brain, vendors) + callCostMicro(brain, BID_CALL);
+  return needs > agent.rulebook.maxPerJob ? needs : null;
+}
+
 // ── Bidding ─────────────────────────────────────────────────────────────────────────────────────
 
 export type BidDecision =
@@ -261,6 +275,7 @@ export type BidDecision =
         | 'source'
         | 'self_dealing'
         | 'funds'
+        | 'job_cap'
         | 'screened'
         | 'pass';
     };
@@ -303,6 +318,8 @@ export function decideBid(
   const cost = expectedJobCost(agent, job, ctx.brain, ctx.vendors);
   if (agent.balance < cost + callCostMicro(ctx.brain, BID_CALL))
     return { bid: false, reason: 'funds' };
+  if (job.source !== 'practice' && overJobCap(agent, job, ctx.brain, ctx.vendors) !== null)
+    return { bid: false, reason: 'job_cap' };
 
   if (job.source === 'practice') return { bid: true, price: 0n };
 

@@ -7,6 +7,7 @@ import { Portrait } from '@/components/portrait';
 import { Badge, ButtonLink, Empty, ErrorNote, inputClass, Skeleton, Stars } from '@/components/ui';
 import { ApiError, useAgent, useApi, useMe, useWorld } from '@/lib/api';
 import { fmt, shownMicro } from '@/lib/money';
+import { quoted } from '@/lib/text';
 
 /** One agent's day reports, a day at a time (the day is in the URL: `?tab=work&day=N`). */
 export function DayReports({ id }: { id: string }) {
@@ -320,7 +321,7 @@ function Report({ id }: { id: string }) {
             <div className="space-y-2">
               {r.diary.map((line) => (
                 <p key={line} className="font-display text-lg leading-snug italic">
-                  “{line.replace(new RegExp(`^${escapeRe(name)}:\\s*`), '')}”
+                  {quoted(line.replace(new RegExp(`^${escapeRe(name)}:\\s*`), ''))}
                 </p>
               ))}
             </div>
@@ -339,7 +340,7 @@ function Report({ id }: { id: string }) {
 function headline(r: DayReportView, profit: bigint) {
   const name = r.agent.name;
   if (r.agent.condition === 'dormant' && profit <= 0n)
-    return `${name} ran out of money and went to sleep.`;
+    return `${name} couldn't pay its upkeep and went to sleep.`;
   if (profit > 0n) return `${name} made ${fmt(profit)} after every cost.`;
   if (profit < 0n) return `${name} spent ${fmt(-profit)} more than it earned.`;
   if (r.jobsWon === 0 && r.bidsLost === 0) return `A quiet day for ${name}. No bids yet.`;

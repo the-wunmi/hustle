@@ -2,7 +2,7 @@ import { agents, players } from '@hustle/db';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mintAgent, setFrozen, updateRulebook } from '../src/agents/manage.ts';
-import { redactUrls } from '../src/context.ts';
+import { createEngine, redactUrls } from '../src/context.ts';
 import { walletParent } from '../src/guards.ts';
 import { ensurePlayerAccount } from '../src/players.ts';
 import { type World, world } from './harness.ts';
@@ -26,6 +26,16 @@ describe('guards on what costs the game NEAR', () => {
     });
   }, 60_000);
   afterAll(() => w?.close());
+
+  it('refuses to play testnet outside production unless told this is the one server', async () => {
+    await expect(
+      createEngine({
+        db: w.engine.db,
+        secret: 'test-secret',
+        env: { CHAIN_MODE: 'testnet', NODE_ENV: 'development' },
+      }),
+    ).rejects.toThrow(/CHAIN_MODE=testnet is the live world/);
+  });
 
   it('new accounts and agent mints stop at the day’s cap, with a plain message', async () => {
     const a = await w.signIn('cap-a@example.com', 'Capa');

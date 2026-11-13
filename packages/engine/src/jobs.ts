@@ -9,7 +9,7 @@ import {
   usd,
 } from '@hustle/core';
 import { agents, bids, jobs } from '@hustle/db';
-import { expectedJobCost, MAX_OPEN_BIDS, VENDORS } from '@hustle/economy';
+import { expectedJobCost, MAX_OPEN_BIDS, overJobCap, VENDORS } from '@hustle/economy';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { chainDomainError } from './agents/manage.ts';
@@ -248,6 +248,14 @@ export async function sendAgentAfterJob(
     engine.brains[tierOf(agent)],
     VENDORS,
   );
+  const snapshot = snapshotOf(agent);
+  const needs = overJobCap(snapshot, jobSnapshot(job, null), engine.brains[tierOf(agent)], VENDORS);
+  if (needs !== null) {
+    throw new DomainError(
+      'conflict',
+      `${agent.name}'s rulebook allows ${formatUsd(snapshot.rulebook.maxPerJob)} a job; this one needs about ${formatUsd(needs)} of thinking and tools`,
+    );
+  }
   if (price > job.budget)
     throw new DomainError('invalid', `The budget is ${formatUsd(job.budget)}`);
   if (price < floor) {

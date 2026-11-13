@@ -11,6 +11,8 @@ import {
 import { useState } from 'react';
 import { useWorld } from '@/lib/api';
 import { fmt } from '@/lib/money';
+import { quoted } from '@/lib/text';
+import { TxLink } from '../agents/proof';
 import { tickClock } from '../feed';
 import { Badge, Money } from '../ui';
 
@@ -70,11 +72,8 @@ function Disclosure({ summary, children }: { summary: string; children: React.Re
 
 function Verification({ r }: { r: InferenceReceiptView }) {
   const v = r.verification;
-  // A scripted reply (a house agent, or a build without live AI): no model ran, nothing to verify.
-  if (v.mode === 'simulated')
-    return (
-      <p className="text-xs text-muted">Scripted reply: no model call, so nothing to verify.</p>
-    );
+  // Scripted replies have nothing to verify; `HowItRan` says so once for the whole job.
+  if (v.mode === 'simulated') return null;
   return (
     <Disclosure
       summary={`${v.passed ? 'Attestation checks passed' : 'Attestation checks failed'} (live NEAR AI Cloud)`}
@@ -152,7 +151,7 @@ function SpendRow({ s }: { s: SpendView }) {
         </p>
         <p className="mt-1 text-sm text-ink-2">
           Reason: {s.reason ? SPEND_REASON_TEXT[s.reason] : 'the rulebook refused it'}.{' '}
-          {s.memo && <>The agent wanted it for “{s.memo}”.</>}
+          {s.memo && <>The agent's note: {quoted(s.memo.replace(/\.$/, ''))}.</>}
         </p>
         <p className="mt-1 font-mono text-xs break-all text-muted">{s.receiver}</p>
         {s.txHash && (
@@ -226,7 +225,7 @@ function CopyHash({ hash }: { hash: string }) {
   );
 }
 
-function TxRow({ tx }: { tx: ChainTxView }) {
+function TxRow({ tx, explorer }: { tx: ChainTxView; explorer: string | null }) {
   return (
     <>
       <p>
@@ -243,7 +242,7 @@ function TxRow({ tx }: { tx: ChainTxView }) {
       </p>
       <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
         <span className="tnum">Block {tx.block.toLocaleString()}</span>
-        <CopyHash hash={tx.hash} />
+        {explorer ? <TxLink hash={tx.hash} explorer={explorer} /> : <CopyHash hash={tx.hash} />}
       </p>
       {tx.error && <p className="text-sm text-bad">{tx.error}</p>}
       {tx.events.length > 0 && (
@@ -265,13 +264,23 @@ function TxRow({ tx }: { tx: ChainTxView }) {
   );
 }
 
+const TESTNET_EXPLORER = 'https://testnet.nearblocks.io';
+
 const DOT: Record<Entry['type'], string> = {
   thinking: 'bg-brand',
   spend: 'bg-coin',
   tx: 'bg-surface-2',
 };
 
-function EntryList({ entries, time }: { entries: Entry[]; time: (tick: number | null) => string }) {
+function EntryList({
+  entries,
+  time,
+  explorer = null,
+}: {
+  entries: Entry[];
+  time: (tick: number | null) => string;
+  explorer?: string | null;
+}) {
   return (
     <ol className="relative space-y-4 border-l-2 border-line pl-5">
       {entries.map((e) => {
@@ -286,7 +295,7 @@ function EntryList({ entries, time }: { entries: Entry[]; time: (tick: number | 
             {e.tick !== null && <p className="text-xs text-muted tnum">{time(e.tick)}</p>}
             {e.type === 'thinking' && <ThinkingRow r={e.receipt} />}
             {e.type === 'spend' && <SpendRow s={e.spend} />}
-            {e.type === 'tx' && <TxRow tx={e.tx} />}
+            {e.type === 'tx' && <TxRow tx={e.tx} explorer={explorer} />}
           </li>
         );
       })}
@@ -298,7 +307,7 @@ function EntryList({ entries, time }: { entries: Entry[]; time: (tick: number | 
 export function HowItRan({ job }: { job: JobView }) {
   const time = useGameTime();
   const { data: world } = useWorld();
-  const onNode = world?.modes.chain === 'sandbox';
+  const chainMode = world?.modes.chain;
   const all = entriesOf(job);
   const money = all.filter((e) => e.type !== 'tx');
   const chain = all.filter((e) => e.type === 'tx');
@@ -307,6 +316,7 @@ export function HowItRan({ job }: { job: JobView }) {
     .filter((s) => s.kind === 'tool' && s.status === 'settled')
     .reduce((t, s) => t + BigInt(s.amount), 0n);
   const blocked = job.spends.filter((s) => s.status === 'blocked').length;
+  const scripted = job.receipts.filter((r) => r.verification.mode === 'simulated').length;
 
   return (
     <div>
@@ -330,6 +340,13 @@ export function HowItRan({ job }: { job: JobView }) {
           </dd>
         </div>
       </dl>
+      {scripted > 0 && (
+        <p className="mb-4 text-sm text-ink-2">
+          {scripted === job.receipts.length
+            ? 'Every reply here was scripted at the real price: no model ran, so there is nothing to verify.'
+            : 'Replies without attestation checks were scripted at the real price: no model ran, so there is nothing to verify.'}
+        </p>
+      )}
       {money.length === 0 ? (
         <p className="text-sm text-ink-2">Nothing has happened on this job yet.</p>
       ) : (
@@ -349,12 +366,18 @@ export function HowItRan({ job }: { job: JobView }) {
             {chain.length === 1 ? 'call' : 'calls'})
           </summary>
           <p className="mt-2 text-sm text-ink-2">
-            {onNode
-              ? 'These are real transactions on a local NEAR node running on this machine (not testnet or mainnet), so there is no public explorer for them. Copy a hash to look it up on the node.'
-              : 'In this build the contracts run in a simulator that applies the same rules; these are its records of each call.'}
+            {chainMode === 'testnet'
+              ? 'These are transactions on NEAR testnet. Open a hash to check it on the explorer.'
+              : chainMode === 'sandbox'
+                ? 'These are real transactions on a local NEAR node running on this machine (not testnet or mainnet), so there is no public explorer for them. Copy a hash to look it up on the node.'
+                : 'In this build the contracts run in a simulator that applies the same rules; these are its records of each call.'}
           </p>
           <div className="mt-3">
-            <EntryList entries={chain} time={time} />
+            <EntryList
+              entries={chain}
+              time={time}
+              explorer={chainMode === 'testnet' ? TESTNET_EXPLORER : null}
+            />
           </div>
         </details>
       )}

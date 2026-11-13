@@ -36,13 +36,20 @@ const SELF_BID_AFTER_TICKS = 20;
 export const tickRng = (engine: Engine, salt: string): Rng =>
   createRng(`${engine.clock.seed}:${engine.clock.tick}:${salt}`);
 
-/** Agents on the board: minted, awake, and not frozen (a frozen wallet pauses its agent). */
+/**
+ * Agents on the board: minted, awake, not frozen (a frozen wallet pauses its agent) and not hidden.
+ */
 export async function activeAgents(engine: Engine): Promise<AgentRow[]> {
   return engine.db
     .select()
     .from(agents)
     .where(
-      and(isNotNull(agents.accountId), isNull(agents.dormantSinceDay), eq(agents.frozen, false)),
+      and(
+        isNotNull(agents.accountId),
+        isNull(agents.dormantSinceDay),
+        eq(agents.frozen, false),
+        eq(agents.hidden, false),
+      ),
     );
 }
 

@@ -1,8 +1,9 @@
-import { agents, inferenceCalls, jobs, ledger, spends } from '@hustle/db';
-import { eq } from 'drizzle-orm';
+import { agents, bids, inferenceCalls, jobs, ledger, spends } from '@hustle/db';
+import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mintAgent } from '../src/agents/manage.ts';
-import { leaderboardView } from '../src/views.ts';
+import { leaderboardView, worldView } from '../src/views.ts';
+import { activeAgents } from '../src/world/market.ts';
 import { type World, world } from './harness.ts';
 
 let w: World;
@@ -57,5 +58,40 @@ describe('the world loop', () => {
   it('the leaderboard ranks every agent', async () => {
     const board = await leaderboardView(w.engine, null, 'season');
     expect(board.entries.length).toBeGreaterThan(5);
+  });
+
+  it('a hidden agent leaves the public lists and the board, and keeps its history', async () => {
+    const [nova] = await w.engine.db.select().from(agents).where(eq(agents.name, 'Nova'));
+    if (!nova) throw new Error('Nova missing');
+    const before = await w.engine.db.select().from(ledger).where(eq(ledger.agentId, nova.id));
+    // What the operator's hiding procedure does, once the agent is between jobs.
+    for (let i = 0; i < 120; i++) {
+      const [now] = await w.engine.db.select().from(agents).where(eq(agents.id, nova.id));
+      if (!now?.busyJobId) break;
+      await w.run(1);
+    }
+    await w.engine.db
+      .update(agents)
+      .set({ hidden: true, frozen: true })
+      .where(eq(agents.id, nova.id));
+    await w.engine.db
+      .update(bids)
+      .set({ status: 'withdrawn' })
+      .where(and(eq(bids.agentId, nova.id), eq(bids.status, 'open')));
+
+    const board = await leaderboardView(w.engine, null, 'season');
+    expect(board.entries.some((e) => e.agent.id === nova.id)).toBe(false);
+    expect((await activeAgents(w.engine)).some((a) => a.id === nova.id)).toBe(false);
+    const { stats } = await worldView(w.engine);
+    expect(stats.activeAgents + stats.dormantAgents).toBe(board.entries.length);
+
+    await w.run(30);
+    const newBids = await w.engine.db
+      .select()
+      .from(bids)
+      .where(and(eq(bids.agentId, nova.id), eq(bids.status, 'open')));
+    expect(newBids).toEqual([]);
+    const after = await w.engine.db.select().from(ledger).where(eq(ledger.agentId, nova.id));
+    expect(after.length).toBeGreaterThanOrEqual(before.length);
   });
 });

@@ -91,7 +91,7 @@ async function atTools(agentId: string, job: typeof jobs.$inferSelect, plan: obj
     .set({
       stage: 'tools',
       nextAt: 0,
-      plan: { plan, rushed: false, toolsBought: 0, toolNotes: [], helperDone: false },
+      plan: { plan, rushed: false, toolsBought: 0, helperDone: false },
     })
     .where(eq(jobs.id, job.id));
 }

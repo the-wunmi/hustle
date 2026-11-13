@@ -302,6 +302,13 @@ export async function updateRulebook(
 ): Promise<AgentRow> {
   const rulebook = parseInput(RulebookInput, input);
   if (!agent.accountId) throw new DomainError('conflict', 'Agent is still being minted');
+  // Upkeep is one payment a day to the treasury: a cap under it would put the agent to sleep.
+  const upkeep = engine.cfg.upkeepPerDay;
+  if (rulebook.maxPerCall < upkeep || rulebook.dailyCap < upkeep)
+    throw new DomainError(
+      'invalid',
+      `The daily cap and the per-payment cap must each cover the ${formatUsd(upkeep)} daily upkeep`,
+    );
   // The same rulebook again changes nothing: no transaction, no gas.
   // (Only for its owner: anyone else goes on to the chain, which refuses them.)
   if (

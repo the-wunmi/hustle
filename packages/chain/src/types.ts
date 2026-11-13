@@ -32,6 +32,8 @@ export interface WalletState {
   dayMs: number;
   day: number;
   spentToday: bigint;
+  /** What each recent job has spent so far, by the wallet's job id (`max_per_job` counts it). */
+  jobSpent: Record<string, bigint>;
   pending: PendingApproval[];
   rotationSeq: number;
 }

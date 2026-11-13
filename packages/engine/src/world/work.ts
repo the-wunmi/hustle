@@ -65,7 +65,6 @@ interface WorkState {
   /** For a job that needs a specialist: whether the agent bought its data. */
   specialist?: Exclude<SpecialistUse, 'none'>;
   toolsBought: number;
-  toolNotes: string[];
   helperDone: boolean;
   /** While a hire waits for the owner: the tick after which the job carries on without it. */
   waitUntil?: number;
@@ -75,7 +74,6 @@ const emptyState = (): WorkState => ({
   plan: null,
   rushed: false,
   toolsBought: 0,
-  toolNotes: [],
   helperDone: false,
 });
 const stateOf = (job: JobRow): WorkState => ({
@@ -239,8 +237,8 @@ const reasonWords = (r: string | null) =>
 
 /**
  * The in-game shops: vendor accounts under `vendors.<root>`, paid in credits through the agent's
- * wallet (so the rulebook decides). A paid honest shop hands over its data; a scam shop takes the
- * money and gives nothing.
+ * wallet (so the rulebook decides). A paid honest shop lifts the work's quality; a scam shop takes
+ * the money and gives nothing. Shops sell no real data, so nothing they "return" reaches the model.
  */
 function shopFor(engine: Engine, handle: string) {
   const v = VENDORS.find((x) => x.handle === handle);
@@ -248,7 +246,7 @@ function shopFor(engine: Engine, handle: string) {
   return {
     accountId: vendorAccount(engine, v.handle),
     price: v.price,
-    goods: (query: string) => (v.scam ? '' : `${v.name}: ${query.slice(0, 60)}… (10 sources)`),
+    delivers: !v.scam,
   };
 }
 
@@ -274,11 +272,7 @@ async function stageTools(engine: Engine, job: JobRow, agent: AgentRow): Promise
       `shop ${handle}`,
     );
     if (outcome.status === 'settled') {
-      const goods = shop.goods(job.title);
-      if (goods) {
-        state.toolsBought += 1;
-        state.toolNotes.push(goods);
-      }
+      if (shop.delivers) state.toolsBought += 1;
       await book(engine, {
         ref: `spend:tool:${job.id}:${handle}`,
         kind: 'tool',
@@ -425,7 +419,7 @@ async function buySpecialist(
     }
     return 'missing';
   }
-  const answered = shop.goods(job.title) !== '';
+  const answered = shop.delivers;
   if (outcome.status === 'settled') {
     await book(engine, {
       ref: `spend:spec:${job.id}:${handle}`,
@@ -734,10 +728,7 @@ async function recordHire(
 async function stageDraft(engine: Engine, job: JobRow, agent: AgentRow): Promise<void> {
   const state = stateOf(job);
   const ctx = await brainContext(engine, agent, job, 'draft');
-  const body = state.toolNotes.length
-    ? `${job.body}\n\nTool results:\n${state.toolNotes.join('\n')}`
-    : job.body;
-  const result = await think(engine, agent, `draft:${job.id}`, job.id, ctx, body);
+  const result = await think(engine, agent, `draft:${job.id}`, job.id, ctx, job.body);
   let deliverable = result.ok
     ? result.output.deliverable
     : `Rushed draft: ${job.title}. (The agent could not afford to think this through.)`;
@@ -766,19 +757,21 @@ async function stageDraft(engine: Engine, job: JobRow, agent: AgentRow): Promise
       if (review.ok) deliverable = review.output.deliverable;
     }
   }
-  const quality =
-    qualityFor(
-      snapshotOf(agent),
-      jobSnapshot(job, null),
-      tierOf(agent),
-      {
-        tools: state.toolsBought,
-        helper: state.helperDone,
-        specialist: job.specialist ? (state.specialist ?? 'missing') : 'none',
-        contract: job.contractTier !== null,
-      },
-      engine.cfg,
-    ) - (state.rushed || !result.ok ? 0.3 : 0);
+  // A draft the agent couldn't pay for is a stub, not work: it must fail a dispute whatever the tier.
+  const quality = !result.ok
+    ? 0
+    : qualityFor(
+        snapshotOf(agent),
+        jobSnapshot(job, null),
+        tierOf(agent),
+        {
+          tools: state.toolsBought,
+          helper: state.helperDone,
+          specialist: job.specialist ? (state.specialist ?? 'missing') : 'none',
+          contract: job.contractTier !== null,
+        },
+        engine.cfg,
+      ) - (state.rushed ? 0.3 : 0);
   await save(engine, job, {
     deliverable,
     quality: Math.max(0, quality),

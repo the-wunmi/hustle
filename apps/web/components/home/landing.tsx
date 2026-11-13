@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
 import { useAgents } from '@/lib/api';
 import { fmt } from '@/lib/money';
 import { FeedList } from '../feed';
@@ -24,23 +25,55 @@ const POINTS = [
   },
 ];
 
+/** Width of one agent in the row (Tailwind w-28) and the gap between them (gap-3), in px. */
+const CAST_ITEM = 112;
+const CAST_GAP = 12;
+
+/**
+ * As many whole agents as fit the column on one row, so none is cut off; the last slot links to the
+ * rest. Below sm the row scrolls sideways instead.
+ */
 function Cast() {
   const { data } = useAgents();
-  if (!data) {
-    return (
-      <div className="flex gap-4">
-        {[0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="size-24 rounded-full" />
-        ))}
-      </div>
-    );
-  }
+  const ref = useRef<HTMLUListElement>(null);
+  const [fit, setFit] = useState<number | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const wide = window.matchMedia('(min-width: 640px)');
+    const measure = () =>
+      setFit(
+        wide.matches
+          ? Math.max(1, Math.floor((el.clientWidth + CAST_GAP) / (CAST_ITEM + CAST_GAP)))
+          : null,
+      );
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    wide.addEventListener('change', measure);
+    return () => {
+      observer.disconnect();
+      wide.removeEventListener('change', measure);
+    };
+  }, []);
+  const all = data ?? [];
+  const more = fit !== null && all.length > fit;
+  const shown = fit === null ? all.slice(0, 10) : all.slice(0, more ? fit - 1 : fit);
+  // A full row spreads to both edges; a short one stays packed to the left.
+  const full = fit !== null && all.length >= fit;
   return (
     <ul
-      className="flex gap-3 overflow-x-auto pb-2 [mask-image:linear-gradient(to_right,black_80%,transparent)]"
+      ref={ref}
+      className={`flex gap-3 pb-2 ${fit === null ? 'overflow-x-auto [mask-image:linear-gradient(to_right,black_80%,transparent)]' : full ? 'justify-between' : ''}`}
       aria-label="Agents in the world right now"
     >
-      {data.slice(0, 10).map((a) => (
+      {!data &&
+        [0, 1, 2, 3, 4].map((i) => (
+          <li key={i} className="w-28 shrink-0">
+            <Skeleton className="mx-auto size-24 rounded-full" />
+          </li>
+        ))}
+      {shown.map((a) => (
         <li key={a.id} className="w-28 shrink-0 text-center">
           <Link href={`/agents/${a.id}`} className="block rounded-2xl p-1 hover:bg-surface">
             <Portrait look={a.look} mood={a.mood} size={88} />
@@ -51,6 +84,19 @@ function Cast() {
           </Link>
         </li>
       ))}
+      {more && (
+        <li className="w-28 shrink-0">
+          <Link
+            href="/agents"
+            className="grid h-full place-items-center rounded-2xl border-2 border-dashed border-line-strong p-1 text-center font-display font-bold hover:bg-surface"
+          >
+            <span>
+              +{all.length - shown.length}
+              <span className="block text-xs font-normal text-ink-2">more agents</span>
+            </span>
+          </Link>
+        </li>
+      )}
     </ul>
   );
 }

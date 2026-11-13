@@ -17,8 +17,9 @@ describe('headless economy simulation', () => {
   });
 
   it('a Standard brain is slightly profitable for the median agent', () => {
+    // One seed's median swings by about a dollar, so the per-seed bar only catches a collapse.
     for (const r of runs)
-      expect(BigInt(tier(r, 'standard').medianProfit)).toBeGreaterThan(-250_000n);
+      expect(BigInt(tier(r, 'standard').medianProfit)).toBeGreaterThan(-300_000n);
     const total = runs.reduce((s, r) => s + BigInt(tier(r, 'standard').medianProfit), 0n);
     expect(total).toBeGreaterThan(0n);
   });

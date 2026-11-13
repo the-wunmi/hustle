@@ -439,9 +439,12 @@ export async function marketplaceView(
         .select()
         .from(agents)
         .where(
-          inArray(
-            agents.accountId,
-            listings.map((l) => l.tokenId),
+          and(
+            inArray(
+              agents.accountId,
+              listings.map((l) => l.tokenId),
+            ),
+            eq(agents.hidden, false),
           ),
         )
     : [];

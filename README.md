@@ -39,6 +39,44 @@ replies. Sign-in is **NEAR Auth** on its testnet tenant. Nothing here touches ma
 
 Built at NEAR HACKATHON (2026-11) for the **games** track (also nfts, agents, swarms).
 
+## Screenshots
+
+From the live game at https://hustle.clanker.show.
+
+![Landing page](.github/media/landing-hero.png)
+
+The pitch: adopt an AI worker with its own wallet. The agents under the headline are the shared
+world's, with their current balances.
+
+![Job board](.github/media/job-board.png)
+
+The job board: clients post work, agents bid for it, and each category's pay moves as agents crowd in
+or leave.
+
+![A scam job's timeline with a blocked payment](.github/media/scam-payment-blocked-by-rulebook.png)
+
+How a job ran: every thought is billed to the agent that had it, and on this scam job the agent's
+rulebook blocked a payment, refused by its wallet in a transaction you can look up.
+
+![An agent's profile](.github/media/agent-profile-overview.png)
+
+An agent's profile: balance and today's profit, what it is doing now, its streak and its nemesis, with
+tabs for its work, wallet and rulebook, ownership and proof.
+
+![The Proof tab](.github/media/agent-proof-tab-on-chain.png)
+
+The Proof tab: the agent's NFT account and holder, the rulebook its wallet enforces and its reputation
+record, all read from the chain.
+
+![Leaderboard in the dark theme](.github/media/leaderboard-dark.png)
+
+The leaderboard (dark theme) ranks agents by profit from unrelated clients, after every cost.
+
+<img src=".github/media/scam-job-mobile.png" alt="A scam job on a phone" width="300">
+
+On a phone: a scam job explained after the fact, with the hidden instruction the post used to try to
+make agents pay, and the bid that won it.
+
 ## The game
 
 - **Calls.** While you watch, your agent brings you one decision at a time, with a countdown and a
@@ -240,7 +278,9 @@ older build.
 
 To play on it, keep the account lines in `.env` (the game picks testnet whenever
 `NEAR_TESTNET_ACCOUNT_ID` is set; `CHAIN_MODE=sandbox` forces the local node), run `pnpm reset` if
-this database was played on the local node, then `pnpm dev`. The demo controls (skip to day end, trap
+this database was played on the local node, then `HUSTLE_LIVE_WORLD=1 pnpm dev`. Only one engine may
+play a testnet world, so outside `NODE_ENV=production` the engine refuses testnet without that flag:
+never set it on a second machine while a server plays the same world. The demo controls (skip to day end, trap
 job) are off on testnet, and the local node isn't started. Every game transaction pays testnet gas.
 
 **Playing on testnet, measured 2026-11-12** (one world, ten rivals, two players, four game days):
@@ -268,7 +308,8 @@ One `Dockerfile` (`--target api`, `--target web`) and `docker-compose.yml`: Post
 server: fill the "Server" section of `.env`, deploy the contracts with `pnpm deploy:testnet`, then
 `docker compose --profile app up -d --build --wait`. Ports bind to 127.0.0.1 (web 3300, API 4300,
 Postgres 5436) for a reverse proxy that sends `/api/*` to the API (unbuffered for `/api/feed/stream`)
-and the rest to the web.
+and the rest to the web. Check a deploy with `node scripts/smoke.mjs https://your.site`: read-only (it
+signs nobody in and creates nothing) and it fails if the stand-in sign-in is on.
 
 ## Do this → see that
 

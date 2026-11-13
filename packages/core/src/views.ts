@@ -107,8 +107,8 @@ export interface ReputationView {
   avgRating100: number | null;
   disputes: number;
   scamsBlocked: number;
-  /** Progress to the next level, 0–100. */
-  progress: number;
+  /** Progress to the next level, 0–100; null at the top level. */
+  progress: number | null;
 }
 
 export interface AgentSummaryView {

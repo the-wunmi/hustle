@@ -27,6 +27,7 @@ import {
 } from '@/components/ui';
 import { ApiError, errorText, post, useApi } from '@/lib/api';
 import { fmt } from '@/lib/money';
+import { quoted } from '@/lib/text';
 
 export default function JobPage() {
   const { id } = useParams<{ id: string }>();
@@ -290,7 +291,9 @@ function Bids({
             return (
               <li
                 key={b.id}
-                className={`flex gap-3 rounded-2xl p-3 ${won ? 'sticker' : fresh ? 'feed-new border-2 border-coin bg-coin/10' : 'border border-line'} ${b.status === 'lost' ? 'opacity-70' : ''}`}
+                // Below sm the price, score and pick button move under the pitch, so the pitch
+                // gets the card's full width instead of a narrow column beside them.
+                className={`grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-2xl p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] ${won ? 'sticker' : fresh ? 'feed-new border-2 border-coin bg-coin/10' : 'border border-line'} ${b.status === 'lost' ? 'opacity-70' : ''}`}
               >
                 <Link href={`/agents/${b.agent.id}`} aria-label={`${b.agent.name}'s profile`}>
                   <Portrait
@@ -315,14 +318,14 @@ function Bids({
                     {b.agent.isMine && <Badge tone="brand">Your agent</Badge>}
                     {fresh && <Badge tone="coin">Just sent</Badge>}
                   </div>
-                  <blockquote className="mt-1 text-ink-2">“{b.pitch}”</blockquote>
+                  <blockquote className="mt-1 text-ink-2">{quoted(b.pitch)}</blockquote>
                   {b.why && (
                     <p className={`mt-1 text-sm font-semibold ${won ? 'text-good' : 'text-ink-2'}`}>
                       {b.why}
                     </p>
                   )}
                 </div>
-                <div className="flex flex-col items-end justify-between gap-2">
+                <div className="col-span-2 flex flex-wrap items-center gap-2 sm:col-span-1 sm:flex-col sm:flex-nowrap sm:items-end sm:justify-between">
                   <Money micro={b.price} className="font-display text-xl font-extrabold" />
                   {b.score !== null && (
                     <span

@@ -112,12 +112,20 @@ export async function brainSourceFor(
 }
 
 /** Whether the wallet would accept a debit of `estimate` right now; checked before paying a provider. */
-async function walletWouldPay(engine: Engine, agent: AgentRow, estimate: bigint): Promise<boolean> {
+async function walletWouldPay(
+  engine: Engine,
+  agent: AgentRow,
+  estimate: bigint,
+  jobId: string | null,
+): Promise<boolean> {
   const wallet = await engine.chain.getWallet(agent.accountId ?? '');
+  const jobSpent = jobId ? (wallet.jobSpent[jobId] ?? 0n) : 0n;
   return (
     !wallet.frozen &&
     estimate <= wallet.rulebook.maxPerCall &&
-    wallet.spentToday + estimate <= wallet.rulebook.dailyCap
+    (jobId === null || jobSpent + estimate <= wallet.rulebook.maxPerJob) &&
+    // Leave the day's upkeep inside the daily cap, or the agent sleeps at day end with money left.
+    wallet.spentToday + estimate + engine.cfg.upkeepPerDay <= wallet.rulebook.dailyCap
   );
 }
 
@@ -154,7 +162,8 @@ export async function think<P extends Purpose>(
   const brain = engine.brains[tier];
   const estimate = callCostMicro(brain, { purpose: ctx.purpose, ...ctx.workload });
   if (!agent.accountId || agent.balance < estimate) return { ok: false, reason: 'funds' };
-  if (!(await walletWouldPay(engine, agent, estimate))) return { ok: false, reason: 'capped' };
+  if (!(await walletWouldPay(engine, agent, estimate, jobId)))
+    return { ok: false, reason: 'capped' };
   const maxTokens = Math.min(MAX_TOKENS, ctx.workload.outTokens * 2) + REASONING_BUDGET;
 
   // Which brain answers: live NEAR AI Cloud for a real player's agent while today's live budget

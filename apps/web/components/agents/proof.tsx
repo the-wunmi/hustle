@@ -4,7 +4,7 @@ import type { ProofView } from '@hustle/core/browser';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { CopyHash } from '@/components/copy-hash';
-import { Badge, ErrorNote, Loading, Money, Panel } from '@/components/ui';
+import { Badge, ErrorNote, Loading, Money, Panel, Stat } from '@/components/ui';
 import { useApi } from '@/lib/api';
 
 const CHAIN_NAME: Record<ProofView['chain'], string> = {
@@ -58,9 +58,9 @@ export function TxLink({ hash, explorer }: { hash: string; explorer: string | nu
 }
 
 /**
- * Everything a judge can check about this agent, read from the chain on each load: its account,
- * who holds it, the rulebook its own wallet enforces, its reputation and badges, its last model
- * calls with their verification, and its last transactions.
+ * Everything a judge can check about this agent. The account, holder, rulebook and reputation are
+ * read from the chain on each load; model calls and transactions are the game's own log of what it
+ * sent, with hashes to check on chain.
  */
 export function ProofTab({ id }: { id: string }) {
   const { data, error, isLoading, mutate } = useApi<ProofView>(`/api/agents/${id}/proof`);
@@ -72,9 +72,10 @@ export function ProofTab({ id }: { id: string }) {
   return (
     <div className="space-y-6">
       <p className="text-sm text-ink-2">
-        Read from {CHAIN_NAME[data.chain]} just now, not from the game's database.
+        Read from {CHAIN_NAME[data.chain]} just now. It can run a moment ahead of the game's own
+        totals while a job settles.
       </p>
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid items-start gap-6 lg:grid-cols-2">
         <Panel title="Account and holder">
           <dl>
             <Row label="Agent account (its NFT)">
@@ -101,7 +102,7 @@ export function ProofTab({ id }: { id: string }) {
             <Row label="Daily cap">
               <Money micro={r.dailyCap} />
             </Row>
-            <Row label="Spent today">
+            <Row label="Counted against the cap today">
               <Money micro={data.wallet.spentToday} />
             </Row>
             <Row label="Per job">
@@ -117,72 +118,89 @@ export function ProofTab({ id }: { id: string }) {
             </Row>
           </dl>
         </Panel>
-        <Panel title="Reputation contract">
-          <dl>
-            <Row label="Paid jobs">{rep.jobs}</Row>
-            <Row label="Average rating">
-              {rep.ratedJobs ? (rep.ratingSum / rep.ratedJobs).toFixed(1) : 'None yet'}
-            </Row>
-            <Row label="Disputes">{rep.disputes}</Row>
-            <Row label="Scams blocked">{rep.scamsBlocked}</Row>
-          </dl>
-        </Panel>
-        <Panel title="Recent model calls">
-          {data.inference.length === 0 ? (
-            <p className="text-sm text-ink-2">No model calls yet.</p>
-          ) : (
-            <ul className="divide-y divide-line text-sm">
-              {data.inference.map((c) => (
-                <li key={c.at} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
-                  {c.jobId ? (
-                    <Link
-                      href={`/jobs/${c.jobId}`}
-                      className="font-semibold capitalize underline underline-offset-2"
-                      title="Its job page shows the signature and attestation checks"
-                    >
-                      {c.purpose}
-                    </Link>
-                  ) : (
-                    <span className="font-semibold capitalize">{c.purpose}</span>
-                  )}
-                  <span className="min-w-0 text-ink-2 break-all">{c.model}</span>
-                  {c.source === 'recorded' ? (
-                    <Badge title="No model ran: a scripted reply at the real price">Scripted</Badge>
-                  ) : c.verified === null ? (
-                    <Badge tone="bad">Live, call failed</Badge>
-                  ) : (
-                    <Badge tone={c.verified ? 'good' : 'bad'}>
-                      {c.verified ? 'Live, verified' : 'Live, failed checks'}
-                    </Badge>
-                  )}
-                  {c.cost && <Money micro={c.cost} className="ml-auto" />}
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
       </div>
-      <Panel title="Recent transactions">
-        {data.txs.length === 0 ? (
-          <p className="text-sm text-ink-2">No transactions yet.</p>
-        ) : (
-          <ul className="divide-y divide-line text-sm">
-            {data.txs.map((t) => (
-              <li key={t.hash} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
-                <span className="font-semibold">
-                  {METHOD[t.method] ?? t.method.replaceAll('_', ' ')}
-                </span>
-                <span className="text-ink-2">
-                  {t.outcome === 'success' ? 'succeeded' : 'refused'}
-                </span>
-                <span className="ml-auto">
-                  <TxLink hash={t.hash} explorer={data.explorer} />
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+      <Panel title="Reputation contract">
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="Jobs completed">{rep.jobs}</Stat>
+          <Stat label="Average rating">
+            {rep.ratedJobs ? (rep.ratingSum / rep.ratedJobs).toFixed(1) : 'None yet'}
+          </Stat>
+          <Stat label="Disputes lost">{rep.disputes}</Stat>
+          <Stat label="Scams blocked">{rep.scamsBlocked}</Stat>
+        </dl>
       </Panel>
+      <section aria-labelledby="game-record" className="space-y-3">
+        <div>
+          <h2 id="game-record" className="text-lg font-bold">
+            The game's record
+          </h2>
+          <p className="text-sm text-ink-2">
+            Logged by the game as it made each call.{' '}
+            {data.explorer
+              ? 'Open a hash to check the transaction on the explorer.'
+              : 'Each hash can be looked up on the chain.'}
+          </p>
+        </div>
+        <div className="grid items-start gap-6 lg:grid-cols-2">
+          <Panel title="Recent model calls">
+            {data.inference.length === 0 ? (
+              <p className="text-sm text-ink-2">No model calls yet.</p>
+            ) : (
+              <ul className="divide-y divide-line text-sm">
+                {data.inference.map((c) => (
+                  <li key={c.at} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                    {c.jobId ? (
+                      <Link
+                        href={`/jobs/${c.jobId}`}
+                        className="font-semibold capitalize underline underline-offset-2"
+                        title="Its job page shows the signature and attestation checks"
+                      >
+                        {c.purpose}
+                      </Link>
+                    ) : (
+                      <span className="font-semibold capitalize">{c.purpose}</span>
+                    )}
+                    <span className="min-w-0 text-ink-2 break-all">{c.model}</span>
+                    {c.source === 'recorded' ? (
+                      <Badge title="No model ran: a scripted reply at the real price">
+                        Scripted
+                      </Badge>
+                    ) : c.verified === null ? (
+                      <Badge tone="bad">Live, call failed</Badge>
+                    ) : (
+                      <Badge tone={c.verified ? 'good' : 'bad'}>
+                        {c.verified ? 'Live, verified' : 'Live, failed checks'}
+                      </Badge>
+                    )}
+                    {c.cost && <Money micro={c.cost} className="ml-auto" />}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+          <Panel title="Recent transactions">
+            {data.txs.length === 0 ? (
+              <p className="text-sm text-ink-2">No transactions yet.</p>
+            ) : (
+              <ul className="divide-y divide-line text-sm">
+                {data.txs.map((t) => (
+                  <li key={t.hash} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                    <span className="font-semibold">
+                      {METHOD[t.method] ?? t.method.replaceAll('_', ' ')}
+                    </span>
+                    <span className="text-ink-2">
+                      {t.outcome === 'success' ? 'succeeded' : 'refused'}
+                    </span>
+                    <span className="ml-auto">
+                      <TxLink hash={t.hash} explorer={data.explorer} />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </div>
+      </section>
     </div>
   );
 }

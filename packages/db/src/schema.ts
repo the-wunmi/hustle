@@ -142,6 +142,11 @@ export const agents = pgTable(
     nextContractTick: integer('next_contract_tick').notNull().default(0),
     /** Bought, and its new owner hasn't confirmed its rulebook yet: the wallet stays frozen. */
     awaitingConfirm: boolean('awaiting_confirm').notNull().default(false),
+    /**
+     * Off every public list (browse, leaderboard, market, helpers), set by an operator for a test
+     * agent. Its history, ledger and NFT stay as they are, and its page still opens from links.
+     */
+    hidden: boolean('hidden').notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex('agents_account_uq').on(t.accountId), index('agents_owner_ix').on(t.ownerId)],

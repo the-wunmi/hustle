@@ -10,6 +10,7 @@ import {
   emptySkills,
   type JobSnapshot,
   levelForXp,
+  overJobCap,
   pickWinner,
   scamSusceptibility,
   screenJobText,
@@ -105,6 +106,22 @@ describe('economy rules', () => {
     });
     expect(honest.length).toBeGreaterThan(10);
     for (const d of honest) expect(screenJobText(d.body).flagged).toBe(false);
+  });
+
+  it('an agent skips a job its own rulebook would stop it finishing', () => {
+    // Premium thinking on a large research job costs more than the default $0.40 a job.
+    const premium = agent({
+      specialty: 'research',
+      skills: emptySkills('research', DEFAULT_ECONOMY),
+      strategy: { ...defaultStrategy('research'), tier: 'premium' },
+    });
+    const big = job({ category: 'research', budget: usd('2.50'), body: 'Research this.' });
+    const premiumCtx = { ...ctx(), brain: DEFAULT_BRAINS.premium };
+    expect(overJobCap(premium, big, DEFAULT_BRAINS.premium, VENDORS)).toBeGreaterThan(usd('0.40'));
+    expect(decideBid(premium, big, premiumCtx)).toEqual({ bid: false, reason: 'job_cap' });
+    // Raising the cap lets it bid.
+    const raised = agent({ ...premium, rulebook: { ...defaultRulebook([]), maxPerJob: usd('2') } });
+    expect(overJobCap(raised, big, DEFAULT_BRAINS.premium, VENDORS)).toBeNull();
   });
 
   it('a screening agent declines a scam without paying to think about it', () => {

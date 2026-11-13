@@ -36,6 +36,13 @@
       "when": 1794533627362,
       "tag": "0004_daily_caps",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794560668354,
+      "tag": "0005_hidden_agents",
+      "breakpoints": true
     }
   ]
 }

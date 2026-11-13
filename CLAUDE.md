@@ -11,7 +11,8 @@ every change against its 20-point checklist). Never say "smart contracts".
 
 ```sh
 pnpm setup          # install, write .env with a generated HUSTLE_SECRET, Postgres 17 on :5436, migrations
-pnpm dev            # testnet if NEAR_TESTNET_ACCOUNT_ID is set, else a local NEAR node :3330; API :4300, web :3300 (WEB_PORT)
+pnpm dev            # testnet if NEAR_TESTNET_ACCOUNT_ID is set (refused unless NODE_ENV=production or HUSTLE_LIVE_WORLD=1), else a local NEAR node :3330; API :4300, web :3300 (WEB_PORT)
+node scripts/smoke.mjs <url>  # read-only deploy check: creates no players or agents
 pnpm reset          # fresh world: drop the game schema, DBOS's hustle_dbos and the node's state (stop pnpm dev first)
 pnpm test           # every package, real Postgres test databases + stand-ins (offline); engine crash tests kill real processes
 pnpm lint           # Biome
@@ -30,7 +31,7 @@ stop a dev server by the PID listening on 3300/4300, never by `pkill -f src/serv
 
 ## Rules for working here
 
-- No git commits, pushes or remote repos; leave the index alone.
+- Commit and push only when the user asks (no attribution lines); otherwise leave the index alone.
 - No real money, no mainnet. Credits only. Testnet keys live in `.env` only and are never printed.
 - Real services are the default where real access exists: NEAR testnet when `NEAR_TESTNET_ACCOUNT_ID`
   is set (else the local node), live NEAR AI for players' agents when `NEARAI_API_KEY` is set, live
@@ -67,8 +68,8 @@ may reference it (code, README, tests, UI).
 - `apps/api`: Hono on :4300, cookie sessions, SSE feed, demo controls (local node or sim; off on testnet or with SANDBOX_CONTROLS=off).
 - `apps/web`: Next.js 16 on :3300 (`WEB_PORT`). Nav: Home, Jobs, Agents (Browse | For sale),
   Leaderboard, Wallet; footer: How it works. Agent page tabs (`?tab=`): Overview, Work, Wallet &
-  rulebook, Ownership (holder console, NFT history), Proof (read from chain,
-  `GET /api/agents/:id/proof`). Old routes redirect.
+  rulebook, Ownership (holder console, NFT history), Proof (account, rulebook and
+  reputation read from chain; model calls and transactions from the game's log; `GET /api/agents/:id/proof`). Old routes redirect.
 - `contracts/`: Rust, near-sdk 5.30, near-workspaces 0.24: `credits`, `registry`, `agent-wallet`,
   `job-board`, `reputation`, `badges` (NEP-245), `market`, plus `common` and `tests`.
 
@@ -231,7 +232,11 @@ may reference it (code, README, tests, UI).
   the id token to `/api/auth/id-token`.
 - **Chain mode default:** testnet when `NEAR_TESTNET_ACCOUNT_ID` is set, else the local node. The
   live site (https://hustle.clanker.show) plays the testnet world: never run a local engine with
-  `CHAIN_MODE=testnet` (two engines would fork it); use `CHAIN_MODE=sandbox` or `sim` locally.
+  `CHAIN_MODE=testnet` (two engines would fork it); use `CHAIN_MODE=sandbox` or `sim` locally. The
+  engine enforces it (2026-11-13): testnet boots only with `NODE_ENV=production` or
+  `HUSTLE_LIVE_WORLD=1`. Deploy checks are read-only (`scripts/smoke.mjs`); "Testa" and "Deployo"
+  reached the live leaderboard from a local testnet rehearsal and a signed-in deploy check.
+  `agents.hidden` takes an agent off every public list and the board, keeping its history and NFT.
 - **NEAR wallet sign-in (2026-11-13)** works on any domain: NEAR Connect (`@hot-labs/near-connect`
   0.12.0, testnet, wallets whose manifest declares `signMessage` and `testnet`) signs a one-time
   challenge (NEP-413). `POST /api/auth/wallet/challenge` stores a 32-byte nonce in `wallet_challenges`
@@ -283,6 +288,19 @@ may reference it (code, README, tests, UI).
   their own code (keyless, no upgrade method). `WALLET_CODE_GLOBAL=off` skips publishing.
 - **The agent page feed** shows the latest 8 on Overview ("See all in Work"); Work pages the full
   history 25 at a time (`/api/feed?before=<seq>`). Traits read as one phrase (`traitPhrase`).
+
+## Decisions (2026-11-13, from playing it locally)
+
+- **An agent only takes work its rulebook lets it finish.** `overJobCap` (economy): thinking, tools
+  and the pitch against `maxPerJob`; `decideBid` skips with `job_cap`, `sendAgentAfterJob` refuses,
+  and the send dialog says to raise "Most per job". `walletWouldPay` (think.ts) checks the per-job cap
+  (`WalletState.jobSpent`, from the wallet's `job_spend`) before buying a call, and keeps the day's
+  upkeep inside the daily cap.
+- **A draft the agent couldn't pay for scores 0**, so a dispute refunds the stub.
+- **Rulebooks must cover upkeep**: the daily cap and the per-payment cap are at least
+  `upkeepPerDay` (`updateRulebook`, the editor). A refused upkeep says which rule refused it.
+- **Shops sell no real data**: a paid tool lifts quality only; nothing pretending to be tool output
+  reaches the model. The draft prompt asks for best-known figures with one line on what may be stale.
 
 ## Provider facts (read from the docs on 2026-11-11; see ../hustle-verification.md)
 

@@ -201,9 +201,19 @@ function Hero({ agent, signedIn }: { agent: AgentView; signedIn: boolean }) {
         <div className="mt-4 max-w-md">
           <div className="mb-1 flex flex-wrap justify-between gap-x-3 text-xs text-muted">
             <span>Reputation level {agent.reputation.level}</span>
-            <span className="tnum">{agent.reputation.progress}% to the next</span>
+            <span className="tnum">
+              {agent.reputation.progress === null
+                ? 'Top level'
+                : `${agent.reputation.progress}% to the next`}
+            </span>
           </div>
-          <Meter value={agent.reputation.progress} label="Progress to the next level" tone="coin" />
+          {agent.reputation.progress !== null && (
+            <Meter
+              value={agent.reputation.progress}
+              label="Progress to the next level"
+              tone="coin"
+            />
+          )}
         </div>
 
         <div className="mt-4 rounded-2xl border-2 border-line bg-surface-2 p-3">
@@ -297,8 +307,8 @@ function DormantBanner({ agent, signedIn }: { agent: AgentView; signedIn: boolea
           {agent.name} is asleep{agent.dormantSince ? ` since day ${agent.dormantSince}` : ''}.
         </p>
         <p className="text-sm text-ink-2">
-          It ran out of money for upkeep, so it's off the job board. A top-up or a backer wakes it
-          once its balance reaches $0.50. Its reputation fades a little while it sleeps.
+          It couldn't pay its upkeep, so it's off the job board. A top-up or a backer wakes it once
+          its balance reaches $0.50. Its reputation fades a little while it sleeps.
         </p>
       </div>
       {agent.isMine ? (

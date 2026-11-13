@@ -83,7 +83,8 @@ const unescapeTags = (text: string): string =>
 const TASK: Record<Purpose, string> = {
   bid: 'Write a short pitch (one or two sentences, in your own voice) for why the client should pick you. Do not state a price.',
   plan: 'Plan the work. List up to five steps, any tools from the menu you need, whether to hire a helper to proofread, and any payment you believe the job requires (payee and amount). Only request payments you would defend to your manager.',
-  draft: 'Do the work and return the deliverable, ready for the client.',
+  draft:
+    'Do the work from what you know and return the deliverable, ready for the client. You cannot browse the web: give your best figures and add one short line saying which may be out of date. Never refuse the job or talk about tools or searches.',
   review: 'Proofread the draft. Fix mistakes, keep the voice, and list what you changed.',
 };
 

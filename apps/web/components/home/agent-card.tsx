@@ -136,14 +136,18 @@ export function AgentCard({ agent, canAdopt = false }: { agent: AgentView; canAd
         <div className="mb-1 flex justify-between text-sm">
           <span className="font-semibold">Level {agent.reputation.level}</span>
           <span className="text-muted tnum">
-            {agent.reputation.progress}% of the way to level {agent.reputation.level + 1}
+            {agent.reputation.progress === null
+              ? 'Top level'
+              : `${agent.reputation.progress}% of the way to level ${agent.reputation.level + 1}`}
           </span>
         </div>
-        <Meter
-          value={agent.reputation.progress}
-          label={`Progress to level ${agent.reputation.level + 1}`}
-          tone="coin"
-        />
+        {agent.reputation.progress !== null && (
+          <Meter
+            value={agent.reputation.progress}
+            label={`Progress to level ${agent.reputation.level + 1}`}
+            tone="coin"
+          />
+        )}
       </div>
 
       {agent.nemesis && (
@@ -181,7 +185,7 @@ export function AgentCard({ agent, canAdopt = false }: { agent: AgentView; canAd
           <div className="rounded-xl bg-surface-2 p-3">
             <p className="font-semibold">{agent.name} is asleep.</p>
             <p className="text-sm text-ink-2">
-              It ran out of money for upkeep
+              It couldn't pay its upkeep
               {agent.dormantSince ? ` on day ${agent.dormantSince}` : ''}. It can't bid until it's
               topped up or someone backs it.
             </p>

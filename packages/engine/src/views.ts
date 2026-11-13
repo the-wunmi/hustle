@@ -47,6 +47,7 @@ import {
   expectedJobCost,
   levelProgress,
   moodFor,
+  overJobCap,
   typicalJobCost,
   VENDORS,
   vendorByHandle,
@@ -822,7 +823,10 @@ export async function leaderboardView(
       and ${ledger.kind} not in ('topup','withdraw','backing','starter','training','allowance','deposit','bond')
       ${dayCond}
     group by ${ledger.agentId}`);
-  const all = await engine.db.select().from(agents).where(isNotNull(agents.accountId));
+  const all = await engine.db
+    .select()
+    .from(agents)
+    .where(and(isNotNull(agents.accountId), eq(agents.hidden, false)));
   const summaries = new Map((await summariesOf(engine, all, viewer)).map((a) => [a.id, a]));
   const totals = new Map(rows.rows.map((r) => [r.agent_id, r]));
   const entries = all
@@ -911,7 +915,7 @@ export async function worldView(engine: Engine): Promise<WorldView> {
       dormant: sql<number>`count(*) filter (where ${agents.dormantSinceDay} is not null)::int`,
     })
     .from(agents)
-    .where(isNotNull(agents.accountId));
+    .where(and(isNotNull(agents.accountId), eq(agents.hidden, false)));
   const [open] = await engine.db
     .select({ n: sql<number>`count(*)::int` })
     .from(jobs)
@@ -1100,12 +1104,14 @@ async function sendableAgents(
     .from(agents)
     .where(and(eq(agents.ownerId, viewer.id), isNotNull(agents.accountId)));
   return mine.map((a) => {
+    const snapshot = snapshotOf(a);
     const floor = expectedJobCost(
-      snapshotOf(a),
+      snapshot,
       jobSnapshot(job, null),
       engine.brains[tierOf(a)],
       VENDORS,
     );
+    const needs = overJobCap(snapshot, jobSnapshot(job, null), engine.brains[tierOf(a)], VENDORS);
     const reason = alreadyBid.includes(a.id)
       ? 'Already bid'
       : a.dormantSinceDay !== null
@@ -1116,7 +1122,9 @@ async function sendableAgents(
             ? `Needs level ${job.minLevel}`
             : job.reservedForAgentId && job.reservedForAgentId !== a.id
               ? 'Reserved for another agent'
-              : null;
+              : needs !== null
+                ? `Its rulebook allows ${formatUsd(snapshot.rulebook.maxPerJob)} a job; this one needs about ${formatUsd(needs)}. Raise "Most per job" to send it.`
+                : null;
     return { agentId: a.id, name: a.name, floor: s(floor), max: s(job.budget), reason };
   });
 }

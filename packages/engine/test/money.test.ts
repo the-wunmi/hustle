@@ -96,7 +96,7 @@ async function jobAtStage(
     .set({
       stage,
       nextAt: 0,
-      plan: { plan, rushed: false, toolsBought: 0, toolNotes: [], helperDone: false },
+      plan: { plan, rushed: false, toolsBought: 0, helperDone: false },
     })
     .where(eq(jobs.id, job!.id))
     .returning();
@@ -209,10 +209,10 @@ describe('money paths', () => {
 
   it('thinking the wallet would refuse to pay for is never bought from the provider', async () => {
     const agent = await newAgent();
+    // The per-job cap: the wallet would refuse the draft halfway through a job.
     await updateRulebook(w.engine, owner, agent, {
       ...defaultRulebook(knownVendorAccounts(w.engine)),
-      dailyCap: 1n,
-      maxPerCall: 1n,
+      maxPerJob: 1n,
     });
     const fresh = (await loadAgent(w.engine, agent.id))!;
     const job = await jobAtStage(agent.id, 'draft', {
@@ -229,6 +229,16 @@ describe('money paths', () => {
       .from(ledger)
       .where(eq(ledger.ref, `inf:t:${job.id}`));
     expect(booked).toHaveLength(0);
+  });
+
+  it('a rulebook that could not pay the daily upkeep is refused', async () => {
+    const agent = await newAgent();
+    await expect(
+      updateRulebook(w.engine, owner, agent, {
+        ...defaultRulebook(knownVendorAccounts(w.engine)),
+        maxPerCall: w.engine.cfg.upkeepPerDay - 1n,
+      }),
+    ).rejects.toThrow(/upkeep/);
   });
 
   it('a provider failure moves no money', async () => {

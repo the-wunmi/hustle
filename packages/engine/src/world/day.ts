@@ -227,7 +227,9 @@ async function settleUpkeep(
     {
       kind: 'dormant',
       tone: 'bad',
-      text: `${agent.name} couldn't cover ${formatUsd(fee)} upkeep and went dormant. A top-up or a backer can wake it.`,
+      text: outcome?.reason
+        ? `${agent.name}'s rulebook refused its ${formatUsd(fee)} upkeep (${outcome.reason.replaceAll('_', ' ')}), so it went dormant. Loosen the rulebook, then top it up to wake it.`
+        : `${agent.name} couldn't cover ${formatUsd(fee)} upkeep and went dormant. A top-up or a backer can wake it.`,
       agentId: agent.id,
     },
     db,

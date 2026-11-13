@@ -3,7 +3,7 @@
 import type { AgentView, RulebookView, VendorView } from '@hustle/core/browser';
 import { useEffect, useId, useState } from 'react';
 import { useSWRConfig } from 'swr';
-import { post, useApi } from '@/lib/api';
+import { post, useApi, useWorld } from '@/lib/api';
 import { fmt, parseDollars, toDollarInput } from '@/lib/money';
 import { useToast } from '../providers';
 import { Badge, Button, Field, InlineError, inputClass, Panel, Switch } from '../ui';
@@ -64,6 +64,8 @@ export function RulebookEditor({
   confirm?: boolean;
 }) {
   const { data: vendors } = useApi<VendorView[]>('/api/vendors');
+  const { data: world } = useWorld();
+  const upkeep = world ? BigInt(world.economy.upkeepPerDay) : null;
   const saved = toDraft(agent.rulebook);
   const [draft, setDraft] = useState<Draft>(saved);
   const [busy, setBusy] = useState<'save' | 'freeze' | null>(null);
@@ -85,6 +87,13 @@ export function RulebookEditor({
   >;
   const fieldError = (key: (typeof CAPS)[number]['key']) => {
     if (parsed[key] === null) return 'Enter dollars, like 0.25';
+    // Upkeep is one payment a day: a cap under it puts the agent to sleep at day end.
+    if (
+      (key === 'maxPerCall' || key === 'dailyCap') &&
+      upkeep !== null &&
+      BigInt(parsed[key] ?? '0') < upkeep
+    )
+      return `Can’t be under the ${fmt(upkeep)} daily upkeep, or ${agent.name} falls asleep`;
     if (
       key === 'maxPerCall' &&
       parsed.maxPerCall &&

@@ -1042,6 +1042,7 @@ export class SimChain implements ChainGateway {
       dayMs: w.day_ms,
       day: today,
       spentToday: today === w.day ? BigInt(w.spent_today) : 0n,
+      jobSpent: Object.fromEntries(w.job_spend.map(([j, v]) => [j, BigInt(v)])),
       pending: w.pending.map(
         (p): PendingApproval => ({
           id: p.id,

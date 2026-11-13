@@ -418,7 +418,7 @@ export function createApp(engine: Engine) {
     const rows = await engine.db
       .select()
       .from(agents)
-      .where(isNotNull(agents.accountId))
+      .where(and(isNotNull(agents.accountId), eq(agents.hidden, false)))
       .orderBy(agents.createdAt);
     return send(c, await summariesOf(engine, rows, c.get('player')));
   });

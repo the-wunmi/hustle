@@ -420,7 +420,7 @@ export function Switch({
         className={`relative mt-0.5 h-7 w-12 shrink-0 rounded-full border-2 border-line-strong transition-colors disabled:opacity-50 ${checked ? 'bg-brand' : 'bg-surface-2'}`}
       >
         <span
-          className={`absolute top-0.5 size-5 rounded-full border-2 border-line-strong bg-white transition-transform ${checked ? 'translate-x-5' : 'translate-x-0.5'}`}
+          className={`absolute top-0.5 left-0.5 size-5 rounded-full border-2 border-line-strong bg-white transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`}
         />
       </button>
     </div>

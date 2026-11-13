@@ -199,6 +199,17 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
   // Testnet whenever a testnet account is configured; otherwise the local node. `sim` (the Postgres
   // simulator of the same contracts) is for fast tests and for machines without the node.
   const chainModeEarly = env.CHAIN_MODE || (env.NEAR_TESTNET_ACCOUNT_ID ? 'testnet' : 'sandbox');
+  // The deployed server plays the testnet world. A second engine on it (pnpm dev on a laptop, a local
+  // smoke run) would fork that world and put its test players on the public lists.
+  if (
+    chainModeEarly === 'testnet' &&
+    env.NODE_ENV !== 'production' &&
+    env.HUSTLE_LIVE_WORLD !== '1'
+  ) {
+    throw new Error(
+      'CHAIN_MODE=testnet is the live world, played by the deployed server only. Run locally with CHAIN_MODE=sandbox (or sim); set HUSTLE_LIVE_WORLD=1 only on the one server that plays testnet.',
+    );
+  }
   // On testnet every chain call is a public-RPC round trip and a block is about a second, so the
   // world ticks less often; the game day keeps its length (the wallets' on-chain day is set to it).
   if (chainModeEarly === 'testnet') {

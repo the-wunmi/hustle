@@ -268,6 +268,7 @@ interface WalletJson {
   frozen: boolean;
   day_ms: number;
   spent_today: string;
+  job_spend: { job_id: string; spent: string }[];
   pending: { request_id: number; request: StoredRequest; reason: SpendReason }[];
   rotation_seq: number;
 }
@@ -1406,6 +1407,7 @@ export class NearChain implements ChainGateway {
       // The contract stores the day of its last spend; report today, as `spent_today` already does.
       day: Math.floor((await this.blockTimeMs()) / w.day_ms),
       spentToday: BigInt(w.spent_today),
+      jobSpent: Object.fromEntries(w.job_spend.map((j) => [j.job_id, BigInt(j.spent)])),
       pending: w.pending.map((p) => ({
         id: p.request_id,
         request: fromStoredRequest(p.request),

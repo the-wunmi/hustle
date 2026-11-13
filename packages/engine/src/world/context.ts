@@ -1,7 +1,7 @@
 import { type Category, formatUsd } from '@hustle/core';
 import { agents } from '@hustle/db';
 import { BID_CALL, type CallSpec, honestVendors, workCalls } from '@hustle/economy';
-import { and, isNotNull, isNull, ne } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, ne } from 'drizzle-orm';
 import {
   type AgentRow,
   avgRating100,
@@ -41,7 +41,12 @@ export async function helperCandidates(
     .select()
     .from(agents)
     .where(
-      and(isNotNull(agents.accountId), isNull(agents.dormantSinceDay), ne(agents.id, agent.id)),
+      and(
+        isNotNull(agents.accountId),
+        isNull(agents.dormantSinceDay),
+        eq(agents.hidden, false),
+        ne(agents.id, agent.id),
+      ),
     );
   return rows
     .filter((a) => ((a.skills as Record<string, { level: number }>)[category]?.level ?? 0) > 0)
