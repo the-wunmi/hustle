@@ -9,6 +9,10 @@ export interface NearAuthConfig {
   clientId: string;
   /** Origins the tenant accepts as a callback (the shared testnet client: http://localhost:3000). */
   allowedOrigins: string[];
+  /** Whether the labelled stand-in sign-in (email code on screen) is offered here. */
+  mock: boolean;
+  /** NEAR wallet sign-in: the network and the NEP-413 recipient the wallet signs for. */
+  wallet: { network: 'testnet'; recipient: string };
 }
 
 /**

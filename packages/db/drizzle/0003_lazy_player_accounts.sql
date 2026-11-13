@@ -1,0 +1,1 @@
+ALTER TABLE "players" ADD COLUMN "account_ready" boolean DEFAULT true NOT NULL;

@@ -55,18 +55,28 @@ export function ButtonLink({
   href,
   variant = 'secondary',
   className = '',
+  fullLoad = false,
   children,
 }: {
   href: string;
   variant?: Variant;
   className?: string;
+  /**
+   * A plain link, so the browser loads the page afresh (with that page's own security headers)
+   * instead of Next swapping it in client-side.
+   */
+  fullLoad?: boolean;
   children: ReactNode;
 }) {
+  const classes = `inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-[15px] font-semibold whitespace-nowrap ${VARIANT[variant]} ${className}`;
+  if (fullLoad)
+    return (
+      <a href={href} className={classes}>
+        {children}
+      </a>
+    );
   return (
-    <Link
-      href={href}
-      className={`inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-[15px] font-semibold whitespace-nowrap ${VARIANT[variant]} ${className}`}
-    >
+    <Link href={href} className={classes}>
       {children}
     </Link>
   );

@@ -77,6 +77,10 @@ interface Funding {
   operator: bigint;
   /** Players and house accounts: their own gas and account storage. */
   account: bigint;
+  /** A player or house account holding less than this is refilled by the root before it signs. */
+  accountLow: bigint;
+  /** What such a refill sends. */
+  accountRefill: bigint;
   /** Accounts that only receive (the treasury, vendors): storage for the account and its key. */
   payee: bigint;
   /** A parent such as `vendors.<root>` is refilled when it holds less than a child's funding plus this. */
@@ -91,8 +95,8 @@ interface Funding {
  * 0.5 NEAR (finished jobs are deleted, so job-board state stays small); the operator gets enough
  * for the ten rival agents the game mints on first boot (about 2 NEAR each without global wallet
  * code) plus gas; players and
- * house accounts get 0.5 NEAR, a few hundred transactions of gas; accounts that only receive get
- * 0.05 NEAR, their storage with room to spare.
+ * house accounts get 0.05 NEAR (storage, and room for the prepaid gas of one call) and are refilled as
+ * they spend it; accounts that only receive get 0.05 NEAR, their storage with room to spare.
  */
 const FUNDING: Record<NearNetwork, Funding> = {
   sandbox: {
@@ -101,6 +105,8 @@ const FUNDING: Record<NearNetwork, Funding> = {
     contractState: 0n,
     operator: 5_000n * NEAR,
     account: 10n * NEAR,
+    accountLow: 0n,
+    accountRefill: 0n,
     payee: 10n * NEAR,
     parentHeadroom: NEAR,
     parentRefill: 10n * NEAR,
@@ -110,7 +116,14 @@ const FUNDING: Record<NearNetwork, Funding> = {
     contractMin: 0n,
     contractState: NEAR / 2n,
     operator: 25n * NEAR,
-    account: NEAR / 2n,
+    // Measured: an account with one key stores 182 bytes (0.00182 NEAR); a player's whole testnet
+    // session of listing, buying and confirming burned 0.0005–0.0022 NEAR of gas (2026-11-12). But a
+    // transaction is only accepted if the signer can cover its prepaid gas: 300 Tgas is about
+    // 0.031 NEAR, refunded unused (measured on the sandbox, 2026-11-13). So 0.05 NEAR, refilled with
+    // 0.03 whenever it drops under 0.04.
+    account: NEAR / 20n,
+    accountLow: NEAR / 25n,
+    accountRefill: (3n * NEAR) / 100n,
     payee: NEAR / 20n,
     parentHeadroom: NEAR / 20n,
     parentRefill: NEAR / 10n,
@@ -166,6 +179,10 @@ export interface NearChainOptions {
   wasmDir?: string;
   /** Sets how much NEAR each new account gets (default sandbox). */
   network?: NearNetwork;
+  /** Least NEAR the root and the operator keep; below it `reserveShortfall` names the account. */
+  reserve?: { root: bigint; operator: bigint };
+  /** Most NEAR the root refills into one signer per UTC day (`refillSigner`), from the tx log. */
+  refillCapPerDay?: bigint;
   /**
    * Durable log of sent transactions (the game passes a Postgres one). Without it the gateway keeps
    * an in-memory index, which is enough for tests but forgets everything on restart.
@@ -384,6 +401,7 @@ export class NearChain implements ChainGateway {
       const prior = await this.priorCall(record.key, record);
       if (prior) return prior;
     }
+    await this.refillSigner(signerId);
     for (let attempt = 0; ; attempt++) {
       const signed = await this.account(signerId).createSignedTransaction({
         receiverId,
@@ -635,6 +653,70 @@ export class NearChain implements ChainGateway {
       ],
       { method: 'create_account', args: { account_id: accountId }, key: `account:${accountId}` },
     );
+  }
+
+  /**
+   * On testnet, a player or house account (under the root, not the root or operator) that signs
+   * starts with very little NEAR; the root tops it up when it runs low, so NEAR goes only to
+   * accounts that actually play.
+   */
+  private async refillSigner(signerId: string): Promise<void> {
+    if (this.funding.accountLow === 0n) return;
+    if (signerId === this.ids.root || signerId === this.funderId || signerId === this.ids.operator)
+      return;
+    if (!signerId.endsWith(`.${this.ids.root}`)) return;
+    const { amount } = await this.provider.viewAccount({ accountId: signerId });
+    if (amount >= this.funding.accountLow) return;
+    // At most `refillCapPerDay` a signer per UTC day: each refill is keyed by signer, day and number,
+    // so the count lives in the tx log and survives restarts. Past it the signer waits for tomorrow
+    // (its transaction fails for want of gas), so a player looping owner actions can't drain the root.
+    const cap = this.opts.refillCapPerDay ?? 10n ** 23n;
+    const most = Number(cap / this.funding.accountRefill);
+    const day = new Date().toISOString().slice(0, 10);
+    for (let n = 1; n <= most; n++) {
+      const key = `refill:${signerId}:${day}:${n}`;
+      if (await this.settledByKey(key)) continue;
+      await this.send(this.ids.root, signerId, [actions.transfer(this.funding.accountRefill)], {
+        method: 'transfer',
+        args: { amount: this.funding.accountRefill.toString() },
+        key,
+      });
+      return;
+    }
+  }
+
+  /** How many refills `signerId` has had today (tests and the reserve log read this). */
+  async refillsToday(signerId: string): Promise<number> {
+    const day = new Date().toISOString().slice(0, 10);
+    let n = 0;
+    while (await this.settledByKey(`refill:${signerId}:${day}:${n + 1}`)) n++;
+    return n;
+  }
+
+  private reserveCache: { at: number; short: string | null } | null = null;
+
+  /**
+   * Which of the root and operator holds less than its reserve (`opts.reserve`), or null. Read at
+   * most every 30 s, so a burst of sign-ups costs two RPC reads, not one per request.
+   */
+  async reserveShortfall(): Promise<string | null> {
+    const reserve = this.opts.reserve;
+    if (!reserve) return null;
+    if (this.reserveCache && Date.now() - this.reserveCache.at < 30_000)
+      return this.reserveCache.short;
+    let short: string | null = null;
+    for (const [accountId, least] of [
+      [this.ids.root, reserve.root],
+      [this.ids.operator, reserve.operator],
+    ] as const) {
+      const { amount } = await this.provider.viewAccount({ accountId });
+      if (amount < least) {
+        short = accountId;
+        break;
+      }
+    }
+    this.reserveCache = { at: Date.now(), short };
+    return short;
   }
 
   /** A parent such as `vendors.<root>` pays for each child it creates; the root refills it. */

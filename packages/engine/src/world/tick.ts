@@ -98,6 +98,9 @@ export function startWorld(engine: Engine): () => Promise<void> {
         });
       const wait = Math.max(50, engine.tickMs - (Date.now() - started));
       await new Promise((r) => setTimeout(r, wait));
+      // How long a tick really takes, start to start (on testnet often well over tickMs), so the
+      // game can say how long a day lasts in real time.
+      engine.tickPaceMs = Math.round(engine.tickPaceMs * 0.9 + (Date.now() - started) * 0.1);
     }
   };
   void loop();

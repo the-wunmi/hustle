@@ -4,13 +4,17 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NEAR_AUTH_TESTNET, type NearAuth, NearAuthClient, NearAuthSimulator } from '@hustle/auth';
 import {
+  accessKeyPermission,
   type ChainGateway,
   type ChainSetup,
   checkRpcUrl,
   DEFAULT_TESTNET_FALLBACK_RPCS,
+  DEFAULT_TESTNET_RPC_URL,
+  type KeyPermission,
   localNodeConfig,
   localRpcUrl,
   NearChain,
+  PacedRpcProvider,
   PgTxLog,
   readFunder,
   readTestnetTarget,
@@ -69,10 +73,21 @@ export interface Engine {
   auth: NearAuth;
   /** Present when AUTH_MODE=mock: issues the id tokens the simulated login steps hand out. */
   authSim: NearAuthSimulator | null;
+  /**
+   * What a public key may do on a NEAR testnet account, read from testnet RPC whatever chain the
+   * game itself runs on: wallet sign-in proves a testnet account, so it always asks testnet.
+   */
+  walletKeys: (accountId: string, publicKey: string) => Promise<KeyPermission>;
+  /** Most new on-chain player accounts and agent mints per UTC day (Infinity: no cap). */
+  dailyCaps: { accounts: number; mints: number };
+  /** Which of the game's NEAR accounts is below its reserve, if any (null: all fine). */
+  reserveCheck: () => Promise<string | null>;
   cfg: EconomyConfig;
   brains: Record<Tier, Brain>;
   modes: ModesView;
   tickMs: number;
+  /** Real milliseconds a tick has been taking (a moving average; `tickMs` until measured). */
+  tickPaceMs: number;
   dayTicks: number;
   /** Ticks between re-reading every agent's balance from the chain (rationed on testnet). */
   balanceRefreshTicks: number;
@@ -101,6 +116,10 @@ export interface EngineOptions {
   env?: NodeJS.ProcessEnv;
   /** Tests pass a fixed secret so ids are stable. */
   secret?: string;
+  /** Tests stand in for testnet's access-key lookup. */
+  walletKeys?: Engine['walletKeys'];
+  dailyCaps?: Engine['dailyCaps'];
+  reserveCheck?: Engine['reserveCheck'];
 }
 
 /** Default real milliseconds per world tick. */
@@ -270,6 +289,17 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     liveAiBudgetNano: usdToNano(env.NEARAI_DAILY_BUDGET_USD ?? DEFAULT_DAILY_BUDGET_USD),
     auth,
     authSim,
+    walletKeys: opts.walletKeys ?? testnetKeyLookup(env),
+    // On testnet NEAR is scarce: cap what costs it per day (DAILY_NEW_ACCOUNTS, DAILY_AGENT_MINTS).
+    dailyCaps: opts.dailyCaps ?? {
+      accounts: capFromEnv(env.DAILY_NEW_ACCOUNTS, chainMode === 'testnet' ? 30 : Infinity),
+      mints: capFromEnv(env.DAILY_AGENT_MINTS, chainMode === 'testnet' ? 60 : Infinity),
+    },
+    reserveCheck:
+      opts.reserveCheck ??
+      (() =>
+        (chain as { reserveShortfall?: () => Promise<string | null> }).reserveShortfall?.() ??
+        Promise.resolve(null)),
     cfg: DEFAULT_ECONOMY,
     brains,
     modes: {
@@ -280,6 +310,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
       brainPrices,
     },
     tickMs,
+    tickPaceMs: tickMs,
     dayTicks,
     balanceRefreshTicks: Number(
       env.BALANCE_REFRESH_TICKS ?? (chainModeEarly === 'testnet' ? 6 : 1),
@@ -293,7 +324,7 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     noCallSince: new Map(),
     log: (message, data) => {
       if (env.NODE_ENV === 'test') return;
-      console.log(JSON.stringify({ at: new Date().toISOString(), message, ...data }));
+      console.log(redactUrls(JSON.stringify({ at: new Date().toISOString(), message, ...data })));
     },
   };
   await chain.ensureSetup(chainSetup(dayMs, env));
@@ -430,6 +461,12 @@ async function testnetChain(
     network: 'testnet',
     wasmDir: join(REPO_ROOT, 'contracts', 'out'),
     txLog: new PgTxLog(db, tick),
+    // NEAR kept back for running the world: below it, no new accounts or agents.
+    reserve: {
+      root: nearAmount(env.NEAR_RESERVE_ROOT ?? '2'),
+      operator: nearAmount(env.NEAR_RESERVE_OPERATOR ?? '2'),
+    },
+    refillCapPerDay: nearAmount(env.NEAR_REFILL_CAP_PER_DAY ?? '0.1'),
   });
   const missing = await chain.planSetup(setup);
   if (missing.length > 0) {
@@ -438,4 +475,38 @@ async function testnetChain(
     );
   }
   return chain;
+}
+
+/** Access-key lookups against NEAR testnet (the configured testnet RPC, else the public one). */
+function testnetKeyLookup(env: NodeJS.ProcessEnv): Engine['walletKeys'] {
+  const mode = env.CHAIN_MODE || (env.NEAR_TESTNET_ACCOUNT_ID ? 'testnet' : 'sandbox');
+  const primary =
+    mode === 'testnet' && env.NEAR_RPC_URL ? env.NEAR_RPC_URL : DEFAULT_TESTNET_RPC_URL;
+  const fallbacks = env.NEAR_RPC_FALLBACK_URLS
+    ? env.NEAR_RPC_FALLBACK_URLS.split(',')
+        .map((u) => u.trim())
+        .filter(Boolean)
+    : DEFAULT_TESTNET_FALLBACK_RPCS;
+  let provider: PacedRpcProvider | undefined;
+  return (accountId, publicKey) => {
+    provider ??= new PacedRpcProvider({ urls: [primary, ...fallbacks], maxPerSecond: 4 });
+    return accessKeyPermission(provider, accountId, publicKey);
+  };
+}
+
+function capFromEnv(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/** "2" or "0.1" NEAR in yoctoNEAR. */
+function nearAmount(value: string): bigint {
+  const [whole = '0', frac = ''] = value.trim().split('.');
+  return BigInt(whole) * 10n ** 24n + BigInt((frac + '0'.repeat(24)).slice(0, 24));
+}
+
+/** Drops query strings from URLs in a log line: a keyed RPC URL carries its key in the query. */
+export function redactUrls(line: string): string {
+  return line.replace(/(https?:\/\/[^\s"'?]+)\?[^\s"']*/g, '$1?[redacted]');
 }

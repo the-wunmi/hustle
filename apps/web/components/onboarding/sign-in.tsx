@@ -4,70 +4,164 @@ import { useId, useState } from 'react';
 import { useSWRConfig } from 'swr';
 import { post, useApi } from '@/lib/api';
 import { type NearAuthConfig, nearAuthIdToken } from '@/lib/near-auth';
-import { Button, Field, InlineError, inputClass, Segmented } from '../ui';
+import { Button, ButtonLink, Field, InlineError, inputClass, Segmented } from '../ui';
 
 interface Challenge {
   challengeId: string;
   simulatedInbox: { to: string; code: string };
 }
 
-/** Sign-in: real NEAR Auth, or (only when the API runs AUTH_MODE=mock) the labelled simulator. */
+/**
+ * Sign-in: a NEAR testnet wallet first (works on any domain); NEAR Auth's popup where its client
+ * accepts this origin; and the labelled stand-in only where the API offers it (AUTH_MODE=mock,
+ * never in production unless explicitly allowed).
+ */
 export function SignIn() {
   const { data: cfg } = useApi<NearAuthConfig>('/api/auth/config');
   if (!cfg) return <div className="sticker skeleton h-48 p-5" />;
-  return cfg.mode === 'live' ? <LiveSignIn cfg={cfg} /> : <SimulatedSignIn />;
+  const origin = typeof window === 'undefined' ? '' : window.location.origin;
+  const nearAuth =
+    cfg.mode === 'live' && (cfg.allowedOrigins.length === 0 || cfg.allowedOrigins.includes(origin));
+  return (
+    <div className="sticker p-5 sm:p-6">
+      <h2 className="text-2xl font-extrabold">Start playing</h2>
+      <WalletIntro />
+      {/* A full page load: the wallet connector runs only on /sign-in, under that page's own
+          (wider) content security policy; every other page keeps the strict one. */}
+      <ButtonLink
+        href={WALLET_SIGN_IN_PATH}
+        fullLoad
+        variant="primary"
+        className="mt-3 h-12 w-full text-base"
+      >
+        Sign in with a NEAR wallet
+      </ButtonLink>
+      <WalletHelp />
+      {nearAuth && <LiveSignIn cfg={cfg} />}
+      {cfg.mock && <SimulatedSignIn />}
+    </div>
+  );
 }
 
+/** The only page that loads the wallet connector (and is served with the CSP it needs). */
+export const WALLET_SIGN_IN_PATH = '/sign-in';
+
+function WalletIntro() {
+  return (
+    <p className="mt-2 text-sm text-ink-2">
+      Sign in with your NEAR testnet account. Your wallet only signs a message to prove it's you:
+      nothing is sent and it pays nothing. The game makes and funds everything else.
+    </p>
+  );
+}
+
+function WalletHelp() {
+  return (
+    <p className="mt-3 text-xs text-muted">
+      No testnet account yet? Create one free in{' '}
+      <a
+        href={TESTNET_WALLET.url}
+        target="_blank"
+        rel="noreferrer"
+        className="font-semibold underline underline-offset-2"
+      >
+        {TESTNET_WALLET.name}
+      </a>{' '}
+      (switch it to testnet), or use Intear, Nightly or a Ledger.
+    </p>
+  );
+}
+
+/** Where to send players without a testnet account: a wallet NEAR Connect offers on testnet that can sign a message (its manifest, 2026-11-13). */
+const TESTNET_WALLET = { name: 'Meteor Wallet', url: 'https://wallet.meteorwallet.app' };
+
+/**
+ * The wallet sign-in itself, on /sign-in only. On success it leaves with a full page load, so the
+ * game runs under the strict policy again.
+ */
+export function WalletSignIn() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  return (
+    <div className="sticker p-5 sm:p-6">
+      <h1 className="text-2xl font-extrabold">Sign in with a NEAR wallet</h1>
+      <WalletIntro />
+      <p className="mt-2 text-sm font-semibold">Only sign this on hustle.clanker.show.</p>
+      <Button
+        variant="primary"
+        size="lg"
+        className="mt-3 w-full"
+        busy={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            const { walletSignIn } = await import('@/lib/near-wallet');
+            await walletSignIn();
+            window.location.assign('/');
+          } catch (err) {
+            setError(err);
+            setBusy(false);
+          }
+        }}
+      >
+        Choose a wallet
+      </Button>
+      <InlineError error={error} />
+      <WalletHelp />
+      <p className="mt-4 text-sm">
+        <a href="/" className="font-semibold underline underline-offset-2">
+          Back to the game
+        </a>
+      </p>
+    </div>
+  );
+}
+
+/** NEAR Auth's popup (email, Google, passkey), offered only where its client accepts this origin. */
 function LiveSignIn({ cfg }: { cfg: NearAuthConfig }) {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const done = useSignedIn();
   const nameId = useId();
-  const origin = typeof window === 'undefined' ? '' : window.location.origin;
-  const allowed = cfg.allowedOrigins.length === 0 || cfg.allowedOrigins.includes(origin);
-  const signIn = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const idToken = await nearAuthIdToken(cfg);
-      await post('/api/auth/id-token', { idToken, ...(name.trim() ? { name: name.trim() } : {}) });
-      await done();
-    } catch (err) {
-      setError(err);
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
-    <div className="sticker p-5 sm:p-6">
-      <h2 className="text-2xl font-extrabold">Start playing</h2>
-      <p className="mt-1 text-sm text-ink-2">
-        Sign in with NEAR Auth: email, Google or a passkey in a popup. No seed phrase, no gas fees.
-        Your NEAR account is made for you.
+    <div className="mt-5 space-y-3 border-t border-line pt-4">
+      <p className="text-sm text-ink-2">
+        Or sign in with NEAR Auth: email, Google or a passkey in a popup. No seed phrase, no gas
+        fees.
       </p>
-      <div className="mt-4 space-y-3">
-        <Field label="Your name (optional)" htmlFor={nameId} hint="Shown next to your agent.">
-          <input
-            id={nameId}
-            className={inputClass}
-            value={name}
-            maxLength={24}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </Field>
-        {!allowed && (
-          <p className="rounded-lg bg-warn-soft px-3 py-2 text-sm font-semibold text-warn">
-            NEAR Auth's shared testnet client only accepts sign-ins from{' '}
-            {cfg.allowedOrigins.join(' or ')}. Open the game there (run the web with WEB_PORT=3000)
-            to sign in.
-          </p>
-        )}
-        <Button busy={busy} disabled={!allowed} onClick={signIn}>
-          Sign in with NEAR Auth
-        </Button>
-        <InlineError error={error} />
-      </div>
+      <Field label="Your name (optional)" htmlFor={nameId} hint="Shown next to your agent.">
+        <input
+          id={nameId}
+          className={inputClass}
+          value={name}
+          maxLength={24}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </Field>
+      <Button
+        busy={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            const idToken = await nearAuthIdToken(cfg);
+            await post('/api/auth/id-token', {
+              idToken,
+              ...(name.trim() ? { name: name.trim() } : {}),
+            });
+            await done();
+          } catch (err) {
+            setError(err);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Sign in with NEAR Auth
+      </Button>
+      <InlineError error={error} />
     </div>
   );
 }
@@ -75,11 +169,10 @@ function LiveSignIn({ cfg }: { cfg: NearAuthConfig }) {
 function SimulatedSignIn() {
   const [method, setMethod] = useState<'email' | 'passkey'>('email');
   return (
-    <div className="sticker p-5 sm:p-6">
-      <h2 className="text-2xl font-extrabold">Start playing</h2>
-      <p className="mt-1 text-sm text-ink-2">
-        Simulated sign-in (AUTH_MODE=mock): the code shows on screen and nothing is sent. Your game
-        account is made for you when you sign in.
+    <div className="mt-5 border-t border-line pt-4">
+      <p className="text-sm text-ink-2">
+        Or use the stand-in sign-in (this server runs AUTH_MODE=mock): the code shows on screen and
+        nothing is sent.
       </p>
       <div className="mt-4">
         <Segmented
@@ -167,7 +260,7 @@ function EmailSignIn() {
           />
         </Field>
         <InlineError error={error} />
-        <Button type="submit" variant="primary" size="lg" className="w-full" busy={busy}>
+        <Button type="submit" variant="secondary" className="w-full" busy={busy}>
           Send me a code
         </Button>
       </form>
@@ -236,7 +329,7 @@ function EmailSignIn() {
         >
           Change email
         </Button>
-        <Button type="submit" variant="primary" size="lg" className="flex-1" busy={busy}>
+        <Button type="submit" variant="secondary" className="flex-1" busy={busy}>
           Sign in
         </Button>
       </div>
@@ -283,7 +376,7 @@ function PasskeySignIn() {
         />
       </Field>
       <InlineError error={error} />
-      <Button type="submit" variant="primary" size="lg" className="w-full" busy={busy}>
+      <Button type="submit" variant="secondary" className="w-full" busy={busy}>
         Continue with a passkey
       </Button>
     </form>

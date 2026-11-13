@@ -394,7 +394,7 @@ export function Creator({ first }: { first: boolean }) {
             <p className="mt-2 text-sm text-ink-2">
               {trimmed || 'It'} starts with {fmt(world.economy.starterAgentCredits)} of credits and
               a practice job, and pays {fmt(world.economy.upkeepPerDay)} upkeep each game day (about{' '}
-              {Math.round((world.dayTicks * world.tickMs) / 60000)} minutes).{' '}
+              {Math.max(1, Math.round(world.dayRealMs / 60000))} minutes right now).{' '}
               {me
                 ? `Your wallet has ${fmt(me.player.wallet)} for topping it up, and you can claim ${fmt(world.economy.dailyAllowance)} of free credits each game day on the Wallet page.`
                 : ''}

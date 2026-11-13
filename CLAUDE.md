@@ -144,11 +144,11 @@ may reference it (code, README, tests, UI).
   account must end in `.testnet`, https testnet RPC, node chain id `testnet`, mainnet refused in every
   form, key wrapped so it prints as `[redacted]`. `--dry-run-local` allows any account only against a
   loopback RPC whose chain id is neither testnet nor mainnet. `NearChain({ network: 'testnet' })` funds
-  accounts sparingly (contracts: code storage + 0.5 NEAR; operator 25; players 0.5; payees 0.05);
+  accounts sparingly (contracts: code storage + 0.5 NEAR; operator 25; players and house accounts 0.05, refilled when low; payees 0.05);
   sandbox amounts are unchanged. With `CHAIN_MODE=testnet` the engine never deploys: it refuses to
   boot until `planSetup` is empty. Measured on a local rehearsal (2026-11-11): the deploy spends
   39.9 NEAR (39 transactions; a rerun sends none), the game's first boot about 5 NEAR from the root
-  plus 20.2 from the operator (10 rival mints at 2.005 each); each later player 0.5 + 2 NEAR.
+  plus 20.2 from the operator (10 rival mints at 2.005 each); each later player then cost 0.5 + 2 NEAR (now about 0.05, made on their first on-chain action, + 0.44 per agent with global wallet code).
 - **Self-dealing**: agents never bid on their owner's jobs; the leaderboard ranks profit from
   unrelated clients only.
 - **The 30-second loop is calls** (`calls.ts`, table `calls`): pitch (price
@@ -229,7 +229,36 @@ may reference it (code, README, tests, UI).
   another project, so `.env` keeps `AUTH_MODE=mock`. `GET /api/auth/config` tells the browser the
   domain, client id and allowed origins; the web signs in with `@auth0/auth0-spa-js`'s popup and posts
   the id token to `/api/auth/id-token`.
-- **Chain mode default:** testnet when `NEAR_TESTNET_ACCOUNT_ID` is set, else the local node.
+- **Chain mode default:** testnet when `NEAR_TESTNET_ACCOUNT_ID` is set, else the local node. The
+  live site (https://hustle.clanker.show) plays the testnet world: never run a local engine with
+  `CHAIN_MODE=testnet` (two engines would fork it); use `CHAIN_MODE=sandbox` or `sim` locally.
+- **NEAR wallet sign-in (2026-11-13)** works on any domain: NEAR Connect (`@hot-labs/near-connect`
+  0.12.0, testnet, wallets whose manifest declares `signMessage` and `testnet`) signs a one-time
+  challenge (NEP-413). `POST /api/auth/wallet/challenge` stores a 32-byte nonce in `wallet_challenges`
+  bound to an http-only cookie (5 min, single use, rate-limited); `POST /api/auth/wallet/verify`
+  checks the testnet account name, the challenge, the ed25519 signature over the NEP-413 payload
+  with our recipient (`PUBLIC_ORIGIN`'s host), then that the key is a FULL-ACCESS key of the account
+  on testnet RPC (`engine.walletKeys`, always testnet whatever the game's chain). The player's
+  identity is `wallet:<account>` and their name is the account; the game still makes its own account
+  for their credits and agents. The stand-in sign-in (`AUTH_MODE=mock`) is never offered with
+  `NODE_ENV=production` unless `ALLOW_MOCK_AUTH=1`. The connector runs only on `/sign-in`, which is
+  reached and left by full page loads (plain links; the page forces full loads on its own links), so
+  the proxy can serve that path alone the wider CSP the wallets' sandboxed code needs.
+- **Player accounts are made lazily** (`ensurePlayerAccount`, workflow `playerAccount` keyed by the
+  account): sign-in writes only the row (`account_ready=false`, workflow `signUpLazy`; the old
+  `signUp` stays registered for recovery); adopting, buying, posting a task, backing or claiming
+  credits makes the account and grants the starter credits once. On testnet a player account gets
+  0.05 NEAR, not 0.5: 182 bytes of storage plus room for one call's prepaid gas (300 Tgas, about
+  0.031 NEAR, must be covered even though it's refunded); the root refills any player or house
+  signer under 0.04 NEAR with 0.03 (`refillSigner`). Sign-ups who never play cost nothing.
+- **NEAR drain guards** (`guards.ts`, table `daily_caps`): on testnet at most `DAILY_NEW_ACCOUNTS`
+  (30) new player accounts and `DAILY_AGENT_MINTS` (60) player mints per UTC day ("The game is full
+  for today; try again tomorrow"); no new accounts or mints once the root or operator is under its
+  reserve (`NEAR_RESERVE_ROOT`, `NEAR_RESERVE_OPERATOR`, 2 NEAR each; `NearChain.reserveShortfall`).
+  Refills are keyed `refill:<signer>:<day>:<n>` and capped by `NEAR_REFILL_CAP_PER_DAY` (0.1 NEAR).
+  Signed owner actions are rate-limited per player (20 per 5 min); a freeze, rulebook or listing
+  that changes nothing sends no transaction. In production `/auth/wallet/*` needs an Origin header;
+  the key lookup runs off the lane. Log lines drop URL query strings (`redactUrls`).
 - **Answering a call returns at once** (`answerCall`, `calls.ts`): the choice is claimed and stored
   with a pending outcome, and a `resolveCall` workflow keyed `<seed>:call:<id>` runs the effects (the
   live bid, a bond, escrow) on the lane. Not a single step: it may start child workflows; every

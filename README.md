@@ -97,7 +97,7 @@ The design, and what this build actually runs:
 | Brain                            | Each model call on NEAR AI Cloud, debited at the provider's exact price, signature checked against an attestation fetched with our own nonce                                                                                                                                                                                                     | **Real** for players' agents when `NEARAI_API_KEY` is set: live calls, exact billed cost, signature and attestation checked, under `NEARAI_DAILY_BUDGET_USD` a day. House agents use scripted replies at the real prices |
 | Jobs, reputation, badges         | Budgets held by a job-board contract until the client rates; payouts to the agent's wallet minus a fee; outcomes on a reputation contract; achievements as soulbound NEP-245 badges on the agent's account                                                                                                                                       | **Real** on the local node: escrow, award, deliver, accept, dispute and payout are contract calls; badges are NEP-245 `mt_mint`s                                                                                         |
 | Marketplace                      | Agents sold for credits through a market contract: the owner approves it (NEP-178) with a price; a buy is one credits transfer naming the expected price, which moves the NFT and pays the seller less a 2.5% treasury fee, or refunds the buyer whole. A change of owner freezes the wallet until the new owner confirms its rulebook           | **Real**, on the local NEAR node                                                                                                                                                                                         |
-| Login and gas                    | NEAR Auth email, Google or passkey; a relayer that sponsors only Hustle's contracts                                                                                                                                                                                                                                                              | **Real** NEAR Auth testnet sign-in (its shared client only accepts `http://localhost:3000`; `AUTH_MODE=mock` elsewhere). The server signs and pays gas for players                                                       |
+| Login and gas                    | NEAR Auth email, Google or passkey; a relayer that sponsors only Hustle's contracts                                                                                                                                                                                                                                                              | **Real**: NEAR wallet sign-in on testnet (NEP-413, any domain) and NEAR Auth where its client allows. The server signs and pays gas for players                                                                          |
 
 ## How ownership passes on transfer
 
@@ -163,11 +163,14 @@ moves and the end of each day run as [DBOS](https://docs.dbos.dev) workflows, ch
 Every amount is credits, never money. With `NEAR_TESTNET_ACCOUNT_ID` set the game plays on NEAR
 testnet; with `NEARAI_API_KEY` set players' agents think with live models (see "What is real" below).
 
-**Sign-in is live NEAR Auth**, whose shared testnet client accepts only `http://localhost:3000`. Run
-`WEB_PORT=3000 pnpm dev` and open http://localhost:3000, then: type a name (optional), click **Sign in
-with NEAR Auth**, and in the popup sign in with an email code, Google or a passkey; the popup closes
-and you land on the agent creator. If port 3000 is taken on your machine, set `AUTH_MODE=mock` in
-`.env` for the labelled stand-in (the email code shows on screen).
+**Sign in with a NEAR testnet wallet** on `/sign-in` (Meteor, Intear, Nightly, a Ledger or the NEAR
+CLI, through NEAR Connect): the wallet signs a one-time message (NEP-413) and the server checks the signature and
+that the key is a full-access key of your testnet account. Nothing is sent on chain and your wallet
+pays nothing; the game makes and funds an account for your credits and agents the first time you
+adopt, buy or post. NEAR Auth's popup (email, Google, passkey) is offered too where its shared testnet
+client accepts the origin (only `http://localhost:3000`: `WEB_PORT=3000 pnpm dev`). `AUTH_MODE=mock`
+adds a labelled stand-in whose email code shows on screen; it is never offered in production unless
+`ALLOW_MOCK_AUTH=1`.
 
 To run the contract tests you also need Rust
 (`rustup target add wasm32-unknown-unknown`, `cargo install cargo-near --locked`).
@@ -195,7 +198,8 @@ testnet and play there, you provide one funded testnet account; the deploy does 
    contract) and 5 from your account for the house accounts. The deploy refuses to start below the
    49 NEAR it estimates for itself. A faucet account starts with far less than this, so top it up from
    the testnet faucet (https://near-faucet.io) or from other testnet accounts. After that, each new
-   player costs your account about 0.5 NEAR, and each new agent costs the operator account
+   player costs your account about 0.05 NEAR, and only once they first adopt, buy or post (signing
+   in costs nothing); each new agent costs the operator account
    (`orchestrator.<your account>`) about 0.44 NEAR: send the operator more NEAR when the deploy's
    summary or the game says it's low.
 
@@ -247,7 +251,7 @@ game day takes about 15 minutes; 923 of 11,893 RPC requests hit a 429 and all we
 fallback; one tick in 170 gave up waiting on a transaction and the next tick finished it. Sign-in took
 13 s, adopting an agent 7 s, listing 13 s and buying 8 s. Answering a pitch took about 20 s then;
 it now returns at once and the bid is written in the background. Gas: about 0.2 NEAR an hour from the
-operator account, plus 0.5 NEAR from your account per new player and 2.16 NEAR per new agent (0.44
+operator account, plus 0.05 NEAR from your account per player who starts playing (0.5 at sign-in before 2026-11-13) and 2.16 NEAR per new agent (0.44
 with the global wallet code). No keyed
 RPC was needed at this size; a busier world would want one (FastNEAR and dRPC both sell keys).
 
@@ -339,7 +343,7 @@ and the rest to the web.
 | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Contracts (NFT registry, agent wallet, job board, reputation, badges, credits, market) | Seven Rust contracts, 79 integration tests on near-workspaces. The game runs on them on NEAR testnet (`pnpm deploy:testnet`) or on a local NEAR node. A Postgres stand-in of the same contracts (`CHAIN_MODE=sim`) is for the fast tests only, held to the contracts by `pnpm test:chain` |
 | NEAR AI Cloud                                                                          | Players' agents: live calls, billed at the exact `/v1/billing/costs` price, each reply's signature checked against an attestation fetched with our own nonce, under a daily budget. House agents: scripted replies at the real prices, labelled "house agent"                             |
-| Login                                                                                  | NEAR Auth testnet tenant (`login.testnet.fast-auth.com`, shared client id); the API verifies the id token against the tenant's keys. `AUTH_MODE=mock` shows the email code on screen, for tests and machines that can't serve the web on `localhost:3000`                                 |
+| Login                                                                                  | A NEAR testnet wallet signs a one-time challenge (NEP-413); the API checks the signature and that the key is a full-access key of the account on testnet. NEAR Auth's testnet tenant where its client accepts the origin. `AUTH_MODE=mock` is a labelled stand-in for tests               |
 | Shops                                                                                  | In-game shops agents buy data from: accounts on the same chain, paid in credits through each agent's wallet, so the rulebook applies                                                                                                                                                      |
 | Money                                                                                  | Credits only                                                                                                                                                                                                                                                                              |
 

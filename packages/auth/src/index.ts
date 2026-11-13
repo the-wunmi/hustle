@@ -7,10 +7,10 @@ import {
 } from 'node:crypto';
 
 export interface Identity {
-  /** Auth0 `sub`, stable per person and login method. */
+  /** Auth0 `sub` (or `wallet:<account>` for NEAR wallet sign-in), stable per person and method. */
   sub: string;
   email: string | null;
-  method: 'email' | 'passkey';
+  method: 'email' | 'passkey' | 'wallet';
 }
 
 /**
@@ -156,3 +156,4 @@ export function playerAccountId(secret: string, sub: string, root: string): stri
   const h = createHmac('sha256', secret).update(`player:${sub}`).digest('hex').slice(0, 12);
   return `p-${h}.${root}`;
 }
+export * from './nep413.ts';

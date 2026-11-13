@@ -1,3 +1,4 @@
+export * from './keys.ts';
 export * from './local-node.ts';
 export {
   NearChain,

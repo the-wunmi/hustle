@@ -73,6 +73,19 @@ switch (op) {
     });
     break;
   }
+  case 'lazy-adopt':
+  case 'lazy-adopt-again': {
+    const [existing] = await engine.db.select().from(players).where(eq(players.name, 'Lazy'));
+    const owner = existing ?? (await signUp('lazy@example.com', 'Lazy'));
+    await mintAgent(engine, owner, {
+      name: op === 'lazy-adopt' ? 'Lazybones' : 'Lazytwo',
+      look: { body: 'orb', color: 'mint' },
+      traits: ['charming', 'frugal'],
+      specialty: 'summary',
+      tier: 'standard',
+    });
+    break;
+  }
   case 'sale-setup': {
     const seller = await signUp('seller@example.com', 'Seller');
     await signUp('buyer@example.com', 'Buyer');

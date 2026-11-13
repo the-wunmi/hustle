@@ -935,6 +935,7 @@ export async function worldView(engine: Engine): Promise<WorldView> {
     tick: engine.clock.tick,
     dayTicks: engine.dayTicks,
     tickMs: engine.tickMs,
+    dayRealMs: engine.dayTicks * Math.max(engine.tickMs, engine.tickPaceMs),
     hour: hourOf(engine),
     event: event
       ? {
@@ -979,9 +980,19 @@ export async function meView(engine: Engine, player: PlayerRow): Promise<MeView>
       id: player.id,
       name: player.name,
       email: player.email,
-      loginMethod: player.loginMethod === 'passkey' ? 'passkey' : 'email',
+      loginMethod:
+        player.loginMethod === 'passkey' || player.loginMethod === 'wallet'
+          ? player.loginMethod
+          : 'email',
       accountId: player.accountId,
-      wallet: s(await engine.chain.ftBalance(player.accountId)),
+      walletAccountId: player.walletAccountId,
+      // Before their first on-chain action a player has no account yet: show the starter credits
+      // it will open with.
+      wallet: s(
+        player.accountReady
+          ? await engine.chain.ftBalance(player.accountId)
+          : engine.cfg.starterWalletCredits,
+      ),
       faucetReadyAtDay: player.allowanceDay === dayOf(engine) ? dayOf(engine) + 1 : null,
       createdAt: player.createdAt.toISOString(),
     },

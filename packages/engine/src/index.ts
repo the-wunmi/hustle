@@ -3,6 +3,7 @@ export * from './agents/manage.ts';
 export * from './agents/state.ts';
 export { AnswerCall, answerCall, callsFor } from './calls.ts';
 export * from './context.ts';
+export * from './guards.ts';
 export * from './jobs.ts';
 export {
   assertHolder,

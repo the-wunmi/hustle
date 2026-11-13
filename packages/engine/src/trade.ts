@@ -49,6 +49,7 @@ import {
   workflowExists,
 } from './durable.ts';
 import type { PlayerRow } from './players.ts';
+import { ensurePlayerAccount } from './players.ts';
 import { book, chainKey, post } from './record.ts';
 import { summariesOf } from './views.ts';
 
@@ -85,6 +86,9 @@ export async function listAgent(
   if (!agent.accountId) throw new DomainError('conflict', 'Agent is still being minted');
   if (agent.busyJobId)
     throw new DomainError('conflict', `${agent.name} is on a job. List it once the job is done.`);
+  // Listed already at this price: nothing to sign.
+  const current = await engine.chain.getListing(agent.accountId);
+  if (current && current.price === cents(price)) return;
   try {
     await engine.chain.listAgent(player.accountId, agent.accountId, cents(price));
   } catch (err) {
@@ -152,6 +156,7 @@ export async function buyAgent(
 ): Promise<AgentRow> {
   const { expectedPrice, requestId } = parseInput(BuyAgent, input);
   if (!agent.accountId) throw new DomainError('not_found', 'Agent not found');
+  buyer = await ensurePlayerAccount(engine, buyer);
   // The buy's chain key and its workflow id both come from the buyer's request id, so a double
   // click, a retried request or a crash mid-sale buys once.
   const key = chainKey('buy', `${buyer.id}:${requestId}`);

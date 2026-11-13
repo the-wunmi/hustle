@@ -17,6 +17,7 @@ import { levelOf, snapshotOf, tierOf, traitsOf } from './agents/state.ts';
 import { think } from './brain/think.ts';
 import type { Engine } from './context.ts';
 import type { PlayerRow } from './players.ts';
+import { ensurePlayerAccount } from './players.ts';
 import { post } from './record.ts';
 import { brainContext } from './world/context.ts';
 import { type JobRow, jobSnapshot, openJob } from './world/jobs.ts';
@@ -58,6 +59,7 @@ export async function postTask(
   ) {
     throw new DomainError('conflict', `You can have up to ${MAX_OPEN_PLAYER_JOBS} jobs running`);
   }
+  player = await ensurePlayerAccount(engine, player);
   const wallet = await engine.chain.ftBalance(player.accountId);
   if (wallet < data.budget)
     throw new DomainError('insufficient_funds', `Your wallet has ${formatUsd(wallet)}`);

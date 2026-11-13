@@ -1,15 +1,17 @@
-import { agents } from '@hustle/db';
+import { agents, players } from '@hustle/db';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { anyAgent, mintAgent, ownedAgent, topUp, updateRulebook } from '../src/agents/manage.ts';
 import {
   claimAllowance,
+  ensurePlayerAccount,
   nameFromEmail,
   passkeyLogin,
   playerForSession,
   startEmailLogin,
   verifyEmailLogin,
 } from '../src/players.ts';
+import { meView } from '../src/views.ts';
 import { type World, world } from './harness.ts';
 
 let w: World;
@@ -21,12 +23,29 @@ afterAll(async () => w.close());
 const look = { body: 'bolt', color: 'tomato' } as const;
 
 describe('sign-in and ownership', () => {
-  it('an email sign-in creates a NEAR account and a funded wallet, once per person', async () => {
-    const a = await w.signUp('same@example.com', 'Ada');
-    const b = await w.signUp('same@example.com', 'Ada again');
+  it('signing in costs nothing on chain; the first on-chain action makes the account, once', async () => {
+    const a = await w.signIn('same@example.com', 'Ada');
+    const b = await w.signIn('same@example.com', 'Ada again');
     expect(b.id).toBe(a.id);
     expect(a.accountId).toMatch(/^p-[0-9a-f]{12}\.hustle\.sim$/);
-    expect(await w.engine.chain.ftBalance(a.accountId)).toBe(w.engine.cfg.starterWalletCredits);
+    expect(a.accountReady).toBe(false);
+    // No account yet, but the wallet shows the starter credits it will open with.
+    expect(await w.engine.chain.ftBalance(a.accountId)).toBe(0n);
+    expect((await meView(w.engine, a)).player.wallet).toBe(
+      w.engine.cfg.starterWalletCredits.toString(),
+    );
+    // Claiming the daily credits is an on-chain action: the account and starter credits come first.
+    await claimAllowance(w.engine, a);
+    const ready = (await w.engine.db.select().from(players).where(eq(players.id, a.id)))[0];
+    expect(ready?.accountReady).toBe(true);
+    expect(await w.engine.chain.ftBalance(a.accountId)).toBe(
+      w.engine.cfg.starterWalletCredits + w.engine.cfg.dailyAllowance,
+    );
+    // Racing or repeated calls make nothing twice.
+    await Promise.all([ensurePlayerAccount(w.engine, a), ensurePlayerAccount(w.engine, a)]);
+    expect(await w.engine.chain.ftBalance(a.accountId)).toBe(
+      w.engine.cfg.starterWalletCredits + w.engine.cfg.dailyAllowance,
+    );
   });
 
   it('an email with dots or plus signs signs in without a name typed', async () => {

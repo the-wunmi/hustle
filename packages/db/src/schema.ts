@@ -33,11 +33,19 @@ export const players = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     name: text('name').notNull(),
     email: text('email'),
-    loginMethod: text('login_method').$type<'email' | 'passkey' | 'house'>().notNull(),
-    /** Stable id from the login provider (NEAR Auth `sub`). */
+    loginMethod: text('login_method').$type<'email' | 'passkey' | 'wallet' | 'house'>().notNull(),
+    /** Stable id from the login provider (NEAR Auth `sub`, or `wallet:<account>` for a NEAR wallet). */
     authSubject: text('auth_subject').notNull(),
     /** The NEAR account created for the player behind the scenes. */
     accountId: text('account_id').notNull(),
+    /** The player's own testnet account, when they signed in with a NEAR wallet (their identity). */
+    walletAccountId: text('wallet_account_id'),
+    /**
+     * Whether `accountId` exists on chain with its starter credits. A new player's account is made
+     * on their first on-chain action (adopt, buy, post a task, back an agent, claim credits), so sign-ups who never
+     * play cost no NEAR. Players from before this column were made at sign-in, hence the default.
+     */
+    accountReady: boolean('account_ready').notNull().default(true),
     isHouse: boolean('is_house').notNull().default(false),
     /** Last game day the free sandbox allowance was claimed. */
     allowanceDay: integer('allowance_day'),
@@ -47,6 +55,35 @@ export const players = pgTable(
     uniqueIndex('players_account_uq').on(t.accountId),
     uniqueIndex('players_subject_uq').on(t.authSubject),
   ],
+);
+
+/**
+ * One-time challenges for NEAR wallet sign-in (NEP-413): the wallet signs the nonce, bound to the
+ * browser that asked for it by a cookie whose hash is stored here. Used once, within minutes.
+ */
+export const walletChallenges = pgTable('wallet_challenges', {
+  /** Base64 of the 32-byte nonce. */
+  nonce: text('nonce').primaryKey(),
+  bindingHash: text('binding_hash').notNull(),
+  message: text('message').notNull(),
+  recipient: text('recipient').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: createdAt(),
+});
+
+/**
+ * Global per-day counters for actions that cost the game NEAR (new player accounts, agent mints), so
+ * a flood of free sign-ins can't drain the operator. Keyed by UTC day and kind.
+ */
+export const dailyCaps = pgTable(
+  'daily_caps',
+  {
+    day: text('day').notNull(),
+    kind: text('kind').notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.kind] })],
 );
 
 export const sessions = pgTable('sessions', {

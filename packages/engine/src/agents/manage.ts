@@ -4,6 +4,7 @@ import {
   AgentLook,
   AgentName,
   Category,
+  canonicalJson,
   createRng,
   DomainError,
   defaultRulebook,
@@ -36,7 +37,9 @@ import {
   wfId,
   workflowExists,
 } from '../durable.ts';
+import { assertNearReserve, takeDailySlot } from '../guards.ts';
 import type { PlayerRow } from '../players.ts';
+import { ensurePlayerAccount } from '../players.ts';
 import { book, chainKey, post } from '../record.ts';
 import { startPractice } from '../world/market.ts';
 import {
@@ -127,6 +130,7 @@ export async function mintAgent(
   input: z.input<typeof MintAgent>,
 ): Promise<AgentRow> {
   const data = parseInput(MintAgent, input);
+  owner = await ensurePlayerAccount(engine, owner);
   const [{ n } = { n: 0 }] = await engine.db
     .select({ n: count() })
     .from(agents)
@@ -140,6 +144,11 @@ export async function mintAgent(
     .from(agents)
     .where(sql`lower(${agents.name}) = lower(${data.name})`);
   if (taken) throw new DomainError('conflict', `${data.name} is already taken. Try another name.`);
+  // Each mint costs the operator NEAR: players' mints are capped per day and stop at the reserve.
+  if (!owner.isHouse) {
+    await assertNearReserve(engine);
+    await takeDailySlot(engine, 'mints');
+  }
   const agentId = randomUUID();
   const res = await runOnce(mintWorkflow, wfId(engine, 'mint', agentId), {
     agentId,
@@ -293,6 +302,13 @@ export async function updateRulebook(
 ): Promise<AgentRow> {
   const rulebook = parseInput(RulebookInput, input);
   if (!agent.accountId) throw new DomainError('conflict', 'Agent is still being minted');
+  // The same rulebook again changes nothing: no transaction, no gas.
+  // (Only for its owner: anyone else goes on to the chain, which refuses them.)
+  if (
+    agent.ownerId === player.id &&
+    canonicalJson(storedRulebook(rulebook)) === canonicalJson(agent.rulebook)
+  )
+    return agent;
   try {
     await engine.chain.setRulebook(player.accountId, agent.accountId, rulebook);
   } catch (err) {
@@ -324,6 +340,8 @@ export async function setFrozen(
 ): Promise<AgentRow> {
   const { frozen } = parseInput(Frozen, input);
   if (!agent.accountId) throw new DomainError('conflict', 'Agent is still being minted');
+  // Already that way: no transaction, no gas.
+  if (agent.ownerId === player.id && agent.frozen === frozen) return agent;
   try {
     await engine.chain.setFrozen(player.accountId, agent.accountId, frozen);
   } catch (err) {
@@ -570,6 +588,7 @@ export async function backAgent(
 ): Promise<AgentRow> {
   const { amount, requestId = randomUUID() } = parseInput(Amount, input);
   if (!agent.accountId) throw new DomainError('not_found', 'Agent not found');
+  backer = await ensurePlayerAccount(engine, backer);
   if (agent.ownerId === backer.id)
     throw new DomainError('invalid', 'Top up your own agent instead');
   const ref = chainKey('backing', `${agent.id}:${backer.id}:${requestId}`);

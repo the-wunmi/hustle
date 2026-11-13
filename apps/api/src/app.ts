@@ -1,5 +1,12 @@
 import { NEAR_AUTH_TESTNET } from '@hustle/auth';
-import { CATEGORIES, type Category, DomainError, type DomainErrorCode, toJson } from '@hustle/core';
+import {
+  CATEGORIES,
+  type Category,
+  DomainError,
+  type DomainErrorCode,
+  newToken,
+  toJson,
+} from '@hustle/core';
 import { agents, jobs } from '@hustle/db';
 import { PLAYER_TASK_IDEAS, typicalJobCost, VENDORS } from '@hustle/economy';
 import {
@@ -44,12 +51,14 @@ import {
   sendAgentAfterJob,
   setFrozen,
   startEmailLogin,
+  startWalletLogin,
   summariesOf,
   topUp,
   trainSkill,
   updateRulebook,
   updateStrategy,
   verifyEmailLogin,
+  verifyWalletLogin,
   walletHistory,
   withdraw,
   worldView,
@@ -67,6 +76,9 @@ import { sandboxRoutes } from './sandbox.ts';
 const SESSION_COOKIE = 'hustle_session';
 /** Sign-ups per client address per window: enough for a household, too few to farm credits. */
 const SIGN_UPS_PER_WINDOW = 10;
+/** Signed owner actions (rulebook, freeze, list, top up…) per player per window. */
+const OWNER_ACTIONS_PER_WINDOW = 20;
+const OWNER_ACTION_WINDOW_MS = 5 * 60_000;
 const SIGN_UP_WINDOW_MS = 10 * 60_000;
 /** How long one live attestation check is reused. */
 const LIVE_ATTESTATION_TTL_MS = 60_000;
@@ -187,12 +199,58 @@ export function createApp(engine: Engine) {
       : undefined;
     return forwarded || socket || 'local';
   };
+  // The stand-in sign-in (AUTH_MODE=mock) shows its code on screen, so it is never offered in
+  // production unless ALLOW_MOCK_AUTH=1 says so explicitly.
+  const mockAuth =
+    engine.authSim !== null &&
+    (process.env.NODE_ENV !== 'production' || process.env.ALLOW_MOCK_AUTH === '1');
+  const requireMock = () => {
+    if (!mockAuth) throw new DomainError('forbidden', 'This sign-in method is off here.');
+  };
+  // What a NEAR wallet signs for (NEP-413 recipient): the public site's host.
+  const walletRecipient = publicOrigin ? new URL(publicOrigin).host : 'localhost';
+  const WALLET_CHALLENGE_COOKIE = 'hustle_wallet_challenge';
+  // A wallet sign-in from a browser always carries an Origin; in production a request without one
+  // is a script, so it is refused (the Origin check above then covers the rest).
+  const originRequired = process.env.NODE_ENV === 'production';
+  const requireOrigin = (c: Context) => {
+    if (originRequired && !c.req.header('origin'))
+      throw new DomainError('forbidden', 'Sign in from the game page.');
+  };
+  app.post('/auth/wallet/challenge', async (c) => {
+    requireOrigin(c);
+    signUps.take(`wallet:${clientKey(c)}`);
+    // Binds the challenge to this browser: only the cookie's hash is stored with the nonce.
+    const binding = newToken();
+    setCookie(c, WALLET_CHALLENGE_COOKIE, binding, {
+      httpOnly: true,
+      sameSite: 'Lax',
+      path: '/api/auth/wallet',
+      secure: publicOrigin?.startsWith('https://') || process.env.NODE_ENV === 'production',
+      maxAge: 10 * 60,
+    });
+    return send(c, await startWalletLogin(engine, binding, walletRecipient));
+  });
+  // Not rate-limited itself: every attempt needs a fresh challenge, which is.
+  app.post('/auth/wallet/verify', async (c) => {
+    requireOrigin(c);
+    const binding = getCookie(c, WALLET_CHALLENGE_COOKIE);
+    const input = await body(c);
+    // Not on the lane: the checks (including a testnet RPC lookup) run first, and only the player
+    // and session writes take the lane, inside `verifyWalletLogin`.
+    const { player, sessionToken } = await verifyWalletLogin(engine, binding, input as never);
+    deleteCookie(c, WALLET_CHALLENGE_COOKIE, { path: '/api/auth/wallet' });
+    startSession(c, sessionToken);
+    return send(c, { player: { id: player.id, name: player.name } });
+  });
   app.post('/auth/email/start', async (c) => {
+    requireMock();
     signUps.take(`email:${clientKey(c)}`);
     const input = await body(c);
     return send(c, await lane(() => startEmailLogin(engine, input as never)));
   });
   app.post('/auth/email/verify', async (c) => {
+    requireMock();
     const { player, sessionToken } = await lane(async () =>
       verifyEmailLogin(engine, (await body(c)) as never),
     );
@@ -206,9 +264,13 @@ export function createApp(engine: Engine) {
       domain: process.env.NEAR_AUTH_DOMAIN || NEAR_AUTH_TESTNET.domain,
       clientId: process.env.NEAR_AUTH_CLIENT_ID || NEAR_AUTH_TESTNET.clientId,
       allowedOrigins: process.env.NEAR_AUTH_DOMAIN ? [] : [...NEAR_AUTH_TESTNET.allowedOrigins],
+      // The labelled stand-in (email code on screen) is offered only where it's allowed.
+      mock: mockAuth,
+      wallet: { network: 'testnet', recipient: walletRecipient },
     }),
   );
   app.post('/auth/passkey', async (c) => {
+    requireMock();
     signUps.take(`passkey:${clientKey(c)}`);
     const { player, sessionToken } = await lane(async () =>
       passkeyLogin(engine, (await body(c)) as never),
@@ -364,6 +426,13 @@ export function createApp(engine: Engine) {
   app.get('/agents/:id', async (c) =>
     send(c, await agentView(engine, await anyAgent(engine, c.req.param('id')), c.get('player'))),
   );
+  // Owner actions sign transactions from the player's account, which the root refills with gas: a
+  // few a minute is plenty for play and keeps a looping script from burning NEAR.
+  const ownerActions = new RateLimit(
+    OWNER_ACTIONS_PER_WINDOW,
+    OWNER_ACTION_WINDOW_MS,
+    'Too many changes in a row. Wait a minute and try again.',
+  );
   const ownerAction = (
     path: string,
     fn: (
@@ -374,6 +443,7 @@ export function createApp(engine: Engine) {
   ) =>
     app.post(`/agents/:id/${path}`, async (c) => {
       const player = me(c);
+      ownerActions.take(player.id);
       const input = await body(c);
       await lane(async () =>
         fn(player, await ownedAgent(engine, player, c.req.param('id')), input),
@@ -474,6 +544,7 @@ export function createApp(engine: Engine) {
   );
   app.post('/approvals/:id', async (c) => {
     const player = me(c);
+    ownerActions.take(player.id);
     const input = await body(c);
     await lane(() => decideApproval(engine, player, c.req.param('id'), input as never));
     return send(c, await approvalsView(engine, player, false));

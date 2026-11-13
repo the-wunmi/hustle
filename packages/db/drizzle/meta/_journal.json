@@ -15,6 +15,27 @@
       "when": 1794516600706,
       "tag": "0001_nearai_live",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794525509097,
+      "tag": "0002_wallet_sign_in",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794526146182,
+      "tag": "0003_lazy_player_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794533627362,
+      "tag": "0004_daily_caps",
+      "breakpoints": true
     }
   ]
 }

@@ -45,6 +45,8 @@ export interface WorldView {
   tick: number;
   dayTicks: number;
   tickMs: number;
+  /** How long a game day lasts in real time at the pace ticks are actually running. */
+  dayRealMs: number;
   /** 0–23, the in-game hour, for the clock. */
   hour: number;
   event: WorldEventView | null;
@@ -429,8 +431,11 @@ export interface PlayerView {
   id: string;
   name: string;
   email: string | null;
-  loginMethod: 'email' | 'passkey';
+  loginMethod: 'email' | 'passkey' | 'wallet';
+  /** The game's account for the player (holds their credits and agents). */
   accountId: string;
+  /** Their own testnet account, when they signed in with a NEAR wallet. */
+  walletAccountId: string | null;
   wallet: MicroString;
   faucetReadyAtDay: number | null;
   createdAt: string;

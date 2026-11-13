@@ -132,6 +132,31 @@ describe('a process killed mid-workflow', () => {
     expect(await workflowStatuses('mint')).not.toContain('PENDING');
   }, 120_000);
 
+  it('a crash between sign-in and the first on-chain action: one account, one starter grant', async () => {
+    // Sign-in makes only the row; adopting makes the account, and the process dies right after the
+    // account exists, before the starter credits.
+    await crashThenRecover('lazy-adopt', 'account:created');
+    const [player] = (
+      await db.query(`select id, account_id, account_ready from players where name = 'Lazy'`)
+    ).rows;
+    expect(player?.account_ready).toBe(true);
+    const created = () =>
+      count(`select count(*) n from sim_txs where key = $1 and outcome = 'success'`, [
+        `account:${player?.account_id}`,
+      ]);
+    const starter = () =>
+      count(`select count(*) n from ledger where ref = $1`, [`starter:${player?.id}`]);
+    expect(await created()).toBe(1);
+    expect(await starter()).toBe(1);
+    expect(await workflowStatuses('account')).not.toContain('PENDING');
+    // The next action finds the account ready and makes nothing again.
+    const again = await run('lazy-adopt-again');
+    expect(again.code, again.out).toBe(0);
+    expect(await created()).toBe(1);
+    expect(await starter()).toBe(1);
+    expect(await count(`select count(*) n from agents where name = 'Lazytwo'`)).toBe(1);
+  }, 180_000);
+
   it('market sale: the agent moves once, the buyer pays once, the books record one sale', async () => {
     const setup = await run('sale-setup');
     expect(setup.code, setup.out).toBe(0);

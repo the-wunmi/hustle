@@ -107,7 +107,11 @@ export default function WalletPage() {
             <p className="mt-1 font-display text-5xl leading-tight font-extrabold tnum">
               <Money micro={me.player.wallet} />
             </p>
-            <p className="mt-1 text-xs break-all text-muted">Account {me.player.accountId}</p>
+            <p className="mt-1 text-xs break-all text-muted">
+              {me.player.walletAccountId
+                ? `Signed in as ${me.player.walletAccountId}. Your credits live in the game's account for you, ${me.player.accountId}.`
+                : `Account ${me.player.accountId}`}
+            </p>
             <div className="mt-5">
               <Allowance readyAtDay={me.player.faucetReadyAtDay} day={world?.day} />
             </div>

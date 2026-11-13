@@ -1,13 +1,13 @@
 import { createDb, createPool } from '@hustle/db';
 import { runMigrations } from '@hustle/db/migrate';
 import { freshTestDatabase } from '@hustle/db/test-databases';
-import { closeEngine, createEngine, type Engine } from '../src/context.ts';
-import { startEmailLogin, verifyEmailLogin } from '../src/players.ts';
+import { closeEngine, createEngine, type Engine, type EngineOptions } from '../src/context.ts';
+import { ensurePlayerAccount, startEmailLogin, verifyEmailLogin } from '../src/players.ts';
 import { seedWorld } from '../src/seed.ts';
 import { tick } from '../src/world/tick.ts';
 
 /** A fresh database, a seeded world and helpers, so each test reads as the scenario. */
-export async function world(suite: string) {
+export async function world(suite: string, extra: Partial<EngineOptions> = {}) {
   const env = await freshTestDatabase(suite);
   await runMigrations(env.DATABASE_URL);
   const pool = createPool(env.DATABASE_URL);
@@ -15,11 +15,17 @@ export async function world(suite: string) {
     db: createDb(pool),
     env: { ...env, NODE_ENV: 'test', CHAIN_MODE: 'sim', AUTH_MODE: 'mock', NEARAI_MODE: 'mock' },
     secret: `test-${suite}`,
+    ...extra,
   });
   await seedWorld(engine);
   return {
     engine,
+    /** A player who has started playing: signed in and with their NEAR account made. */
     async signUp(email: string, name: string) {
+      return ensurePlayerAccount(engine, await this.signIn(email, name));
+    },
+    /** Signed in only: no account on chain yet (it's made on the first on-chain action). */
+    async signIn(email: string, name: string) {
       const { challengeId, simulatedInbox } = await startEmailLogin(engine, { email });
       return (await verifyEmailLogin(engine, { challengeId, code: simulatedInbox.code, name }))
         .player;
