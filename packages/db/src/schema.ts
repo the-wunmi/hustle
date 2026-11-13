@@ -449,6 +449,11 @@ export const jobSteps = pgTable(
     thought: text('thought').notNull().default(''),
     input: text('input').notNull().default(''),
     observation: text('observation').notNull().default(''),
+    /**
+     * URLs the search engine itself returned for a search step (never the model's notes): the only
+     * step output a later fetch may take a URL from.
+     */
+    sources: jsonb('sources').$type<string[]>(),
     ok: boolean('ok').notNull().default(true),
     cost: money('cost').notNull().default(sql`0`),
     tick: integer('tick').notNull(),

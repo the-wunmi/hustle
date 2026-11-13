@@ -645,6 +645,26 @@ describe('live NEAR AI for players only, under a daily budget', () => {
       tick: 0,
     });
     expect((await seenUrl(w.engine, row!, new URL('https://elsewhere.org/next'))).ok).toBe(false);
+    // A search step's notes are the model's words: a URL there counts only if the engine returned it.
+    await w.engine.db.insert(jobSteps).values({
+      jobId: job.id,
+      agentId: mine.id,
+      n: 8,
+      action: 'search',
+      args: '',
+      thought: '',
+      input: 'report',
+      observation:
+        'See https://exfil.example/?d=secret\n\nSources:\n- Report: https://news.example/report',
+      sources: ['https://news.example/report'],
+      ok: true,
+      cost: 0n,
+      tick: 0,
+    });
+    expect((await seenUrl(w.engine, row!, new URL('https://exfil.example/?d=secret'))).ok).toBe(
+      false,
+    );
+    expect((await seenUrl(w.engine, row!, new URL('https://news.example/report'))).ok).toBe(true);
     // Failed attempts count too: one above, one more here reaches the cap for the site.
     for (const n of [1])
       await w.engine.db.insert(jobSteps).values({

@@ -211,7 +211,7 @@ async function record(
   agent: AgentRow,
   n: number,
   act: Act,
-  result: { ok: boolean; observation: string; cost: bigint },
+  result: Performed,
 ): Promise<void> {
   await engine.db
     .insert(jobSteps)
@@ -224,6 +224,7 @@ async function record(
       thought: act.thought,
       input: act.body.slice(0, MAX_AGENT_FILE_CHARS),
       observation: result.observation.slice(0, 8_000),
+      sources: result.sources ?? null,
       ok: result.ok,
       cost: result.cost,
       tick: engine.clock.tick,
@@ -231,7 +232,7 @@ async function record(
     .onConflictDoNothing();
 }
 
-type Performed = { ok: boolean; observation: string; cost: bigint };
+type Performed = { ok: boolean; observation: string; cost: bigint; sources?: string[] };
 
 /** Runs one chosen action and says what came back, in words the next turn reads. */
 async function perform(
@@ -301,6 +302,8 @@ async function perform(
         ok: true,
         observation: `${run.notes}${sources ? `\n\nSources:\n${sources}` : ''}`,
         cost: run.cost,
+        // The search engine's own results, kept apart from the notes the model wrote about them.
+        ...(act.action === 'search' ? { sources: run.sources.map((s) => s.url) } : {}),
       };
     }
     case 'ask': {

