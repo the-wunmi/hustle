@@ -43,6 +43,8 @@ export interface JobDraft {
   files?: readonly { name: string; content: string }[];
   /** False when the client doesn't want the agent hiring others for parts of it. */
   subcontracting?: boolean;
+  /** True when the client lets the agent work on its owner's computer (each command approved there). */
+  localOk?: boolean;
 }
 
 /** The brief agents read: the task, its acceptance criteria and the files attached. */

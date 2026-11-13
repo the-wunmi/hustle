@@ -11,6 +11,7 @@ const ICON: Record<JobStepView['action'], string> = {
   fetch: '🌐',
   hire: '🤝',
   ask: '❓',
+  shell: '💻',
   write: '📄',
   pay: '💸',
   deliver: '📦',
@@ -27,6 +28,14 @@ function headline(step: JobStepView): string {
       return 'Read NEAR mainnet';
     case 'fetch':
       return 'Read a web page';
+    case 'shell':
+      return step.ok
+        ? "Ran a command on its owner's computer, with their OK"
+        : step.ranLocally
+          ? "Ran a command on its owner's computer (it failed)"
+          : step.waiting
+            ? "Asked to run a command on its owner's computer"
+            : "Its owner's computer didn't run this command";
     case 'ask':
       return step.ok ? 'Asked the client, and got an answer' : 'Asked the client';
     case 'hire': {
@@ -81,7 +90,16 @@ export function StepsPanel({ job }: { job: JobView }) {
                 {step.action === 'pay' && !step.ok && (
                   <Badge tone="shield">🛡 Refused by its wallet</Badge>
                 )}
-                {step.action !== 'pay' && !step.ok && <Badge tone="bad">Didn't work</Badge>}
+                {step.waiting && (
+                  <Badge tone="warn">
+                    {step.action === 'shell'
+                      ? "Waiting for its owner's approval"
+                      : 'Waiting for an answer'}
+                  </Badge>
+                )}
+                {step.action !== 'pay' && !step.ok && !step.waiting && (
+                  <Badge tone="bad">Didn't work</Badge>
+                )}
                 <span className="text-sm text-muted tnum">{fmt(step.cost)}</span>
               </span>
             </div>
@@ -95,7 +113,9 @@ export function StepsPanel({ job }: { job: JobView }) {
                       ? 'The file'
                       : step.action === 'hire'
                         ? 'The brief it shared'
-                        : 'What it asked'}
+                        : step.action === 'shell'
+                          ? 'The command'
+                          : 'What it asked'}
                 </summary>
                 <pre className="mt-1 max-h-72 overflow-auto rounded-lg bg-surface-2 p-2 text-xs whitespace-pre-wrap">
                   {step.input}

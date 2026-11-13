@@ -2,10 +2,10 @@
 
 import type { NftHistoryView, NftMoneyEntry } from '@hustle/core/browser';
 import { CopyHash } from '@/components/copy-hash';
-import { tickClock } from '@/components/feed';
 import { Badge, Empty, ErrorNote, Loading, Panel } from '@/components/ui';
-import { ApiError, useApi, useWorld } from '@/lib/api';
+import { ApiError, useApi } from '@/lib/api';
 import { fmt } from '@/lib/money';
+import { realTime } from '@/lib/time';
 
 /** Plain names for the money kinds the history reports; anything new shows as the API sends it. */
 const KIND_LABEL: Record<string, string> = {
@@ -27,29 +27,13 @@ const KIND_LABEL: Record<string, string> = {
 const kindLabel = (k: string) =>
   KIND_LABEL[k] ?? k.replaceAll('_', ' ').replace(/^./, (c) => c.toUpperCase());
 
-/** "Day N, HH:00" from a world tick, or the wall-clock date when the entry has no tick. */
-function when(tick: number | null, at: string, dayTicks: number): string {
-  if (tick === null) return new Date(at).toLocaleString();
-  return `Day ${Math.floor(tick / dayTicks) + 1}, ${tickClock(tick, dayTicks)}`;
-}
-
 const HOW: Record<NftHistoryView['holders'][number]['how'], string> = {
   minted: 'Minted to',
   sold: 'Sold to',
   transferred: 'Transferred to',
 };
 
-function MoneyTable({
-  rows,
-  sign,
-  dayTicks,
-  who,
-}: {
-  rows: NftMoneyEntry[];
-  sign: '+' | '−';
-  dayTicks: number;
-  who: string;
-}) {
+function MoneyTable({ rows, sign, who }: { rows: NftMoneyEntry[]; sign: '+' | '−'; who: string }) {
   if (rows.length === 0) return <p className="text-sm text-ink-2">Nothing yet.</p>;
   return (
     <div className="overflow-x-auto">
@@ -90,9 +74,7 @@ function MoneyTable({
                 {sign}
                 {fmt(r.amount)}
               </td>
-              <td className="py-1.5 pr-3 whitespace-nowrap text-ink-2 tnum">
-                {when(r.tick, r.at, dayTicks)}
-              </td>
+              <td className="py-1.5 pr-3 whitespace-nowrap text-ink-2 tnum">{realTime(r.at)}</td>
               <td className="py-1.5">
                 <CopyHash hash={r.txHash} />
               </td>
@@ -107,8 +89,6 @@ function MoneyTable({
 /** Everyone who has held the agent's NFT, and every payment in and out of its account. */
 export function NftHistory({ id }: { id: string }) {
   const { data, error, isLoading, mutate } = useApi<NftHistoryView>(`/api/agents/${id}/history`);
-  const { data: world } = useWorld();
-  const dayTicks = world?.dayTicks ?? 180;
 
   if (isLoading) return <Loading label="Loading the history" rows={4} />;
   if (error instanceof ApiError && error.status === 404) {
@@ -177,7 +157,7 @@ export function NftHistory({ id }: { id: string }) {
               </p>
               <p className="flex flex-wrap items-center gap-x-3 text-xs text-muted">
                 <span className="break-all">{h.accountId}</span>
-                <span className="tnum">{when(h.tick, h.at, dayTicks)}</span>
+                <span className="tnum">{realTime(h.at)}</span>
                 <CopyHash hash={h.txHash} />
               </p>
             </li>
@@ -186,11 +166,11 @@ export function NftHistory({ id }: { id: string }) {
       </Panel>
 
       <Panel title="Earned">
-        <MoneyTable rows={data.earnings} sign="+" dayTicks={dayTicks} who="From" />
+        <MoneyTable rows={data.earnings} sign="+" who="From" />
       </Panel>
 
       <Panel title="Paid out">
-        <MoneyTable rows={data.payouts} sign="−" dayTicks={dayTicks} who="To" />
+        <MoneyTable rows={data.payouts} sign="−" who="To" />
       </Panel>
     </div>
   );

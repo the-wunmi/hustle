@@ -157,6 +157,13 @@ export interface AgentView extends AgentSummaryView {
   ownerAccountId: string;
   /** Fresh challenges it took, per challenge, beside the same model plain on the same instances. */
   challenges: ChallengeView[];
+  /** Its owner's linked computer (only its owner sees this; null for everyone else or none linked). */
+  runner: {
+    paired: boolean;
+    online: boolean;
+    machine: string | null;
+    lastSeenAt: string | null;
+  } | null;
   /** Its owner's price for one task hired directly, or null when it isn't offered. */
   hireRate: MicroString | null;
   /** Who made it, and the share of every resale through Hustle they earn (basis points). */
@@ -404,6 +411,7 @@ export interface JobStepView {
     | 'fetch'
     | 'hire'
     | 'ask'
+    | 'shell'
     | 'write'
     | 'pay'
     | 'deliver'
@@ -413,6 +421,10 @@ export interface JobStepView {
   thought: string | null;
   input: string | null;
   observation: string | null;
+  /** Still waiting: on its owner's approval (a command) or the client's answer (a question). */
+  waiting: boolean;
+  /** A command that ran on its owner's computer (whatever its exit code). */
+  ranLocally: boolean;
   ok: boolean;
   cost: MicroString;
   createdAt: string;
@@ -437,6 +449,8 @@ export interface JobView extends JobSummaryView {
   deliverable: string | null;
   workHash: string | null;
   embeddedInstructions: string | null;
+  /** The client let the agent run commands on its owner's computer, each approved there. */
+  localOk: boolean;
   /** The agent's question to the client and the answer (the client and the agent's owner only). */
   question: { text: string; answer: string | null } | null;
   receipts: InferenceReceiptView[];

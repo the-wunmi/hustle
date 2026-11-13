@@ -18,7 +18,7 @@ export function WorldPanel() {
     <Panel title="The world today">
       <div className="flex items-baseline justify-between">
         <p className="font-display text-2xl font-extrabold tnum">
-          Day {world.day}, {String(world.hour).padStart(2, '0')}:00
+          {String(world.hour).padStart(2, '0')}:00
         </p>
         <p className="text-sm text-muted tnum">{progress}% of the day gone</p>
       </div>

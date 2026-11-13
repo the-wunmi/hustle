@@ -10,6 +10,14 @@ import { fmt, shownMicro } from '@/lib/money';
 import { quoted } from '@/lib/text';
 
 /** One agent's day reports, a day at a time (the day is in the URL: `?tab=work&day=N`). */
+/** A game day relative to today (days are minutes long, so a day number would mislead). */
+const dayLabel = (d: number, today: number) =>
+  d === today
+    ? 'Today (in progress)'
+    : d === today - 1
+      ? 'The day before'
+      : `${today - d} days back`;
+
 export function DayReports({ id }: { id: string }) {
   return (
     <Suspense fallback={<ReportSkeleton />}>
@@ -116,8 +124,7 @@ function Report({ id }: { id: string }) {
           >
             {days.map((d) => (
               <option key={d} value={d}>
-                Day {d}
-                {d === today ? ' (in progress)' : ''}
+                {dayLabel(d, today)}
               </option>
             ))}
           </select>
@@ -156,7 +163,8 @@ function Report({ id }: { id: string }) {
                 The {name} Daily
               </h1>
               <p className="mt-1 font-semibold">
-                Day {r.day} report{r.rank ? `, ranked #${r.rank} on the board` : ''}
+                {dayLabel(r.day, today)}
+                {r.rank ? `, ranked #${r.rank} on the board` : ''}
               </p>
             </div>
             <div className="ml-auto hidden sm:block">

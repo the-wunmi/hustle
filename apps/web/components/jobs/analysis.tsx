@@ -10,7 +10,11 @@ const SOURCE_LABEL = (source: string) =>
     ? 'attached by the client'
     : source === 'agent'
       ? 'written by the agent'
-      : `fetched by ${source.replace('tool:', '').replace('_', ' ')}`;
+      : source === 'tool:local'
+        ? "made on its owner's computer (Hustle can't re-run it)"
+        : source === 'tool:hire'
+          ? 'from the specialist it hired'
+          : `fetched by ${source.replace('tool:', '').replace('_', ' ')}`;
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));

@@ -30,3 +30,4 @@ docs/demo/raw/
 .idea
 .vscode/*
 !.vscode/extensions.json
+apps/web/public/hustle-runner.mjs

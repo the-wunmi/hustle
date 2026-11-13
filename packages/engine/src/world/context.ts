@@ -87,6 +87,7 @@ export async function brainContext<P extends Purpose>(
     budget?: BrainContext['budget'];
     specialists?: BrainContext['specialists'];
     canAsk?: boolean;
+    canShell?: boolean;
   } = {},
 ): Promise<BrainContext<P>> {
   const spec = extra.tool ? toolById(extra.tool.id) : undefined;
@@ -144,6 +145,7 @@ export async function brainContext<P extends Purpose>(
     ...(extra.budget ? { budget: extra.budget } : {}),
     ...(extra.specialists?.length ? { specialists: extra.specialists } : {}),
     ...(extra.canAsk ? { canAsk: true } : {}),
+    ...(extra.canShell ? { canShell: true } : {}),
     ...(agent.playbook ? { playbook: agent.playbook } : {}),
   };
 }

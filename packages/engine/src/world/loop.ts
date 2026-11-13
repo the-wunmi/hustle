@@ -14,6 +14,7 @@ import {
   saveJobFile,
 } from '../files.ts';
 import { chainKey, post } from '../record.ts';
+import { commandResult, queueCommand, runnerOnline } from '../runner.ts';
 import { RUNNERS, usableTools } from '../tools/index.ts';
 import { runSandboxStep } from '../tools/python.ts';
 import { brainContext } from './context.ts';
@@ -51,7 +52,9 @@ export interface LoopOutcome {
 const STOPPED = "Couldn't take this step";
 const TOOL_ACTIONS = ['python', 'search', 'chain', 'fetch'];
 /** A question's step while the client hasn't answered, and how long the agent waits. */
-const WAITING = 'Waiting for the client to answer.';
+export const WAITING = 'Waiting for the client to answer.';
+/** A command's step while its owner decides and it runs. */
+export const WAITING_LOCAL = "Waiting for its owner's computer.";
 export const ASK_WAIT_TICKS = 12;
 
 /**
@@ -82,6 +85,24 @@ export async function runLoop(engine: Engine, agent: AgentRow, job: JobRow): Pro
     if (s.ok && TOOL_ACTIONS.includes(s.action)) outcome.toolUses += 1;
     if (s.ok && s.action === 'pay') outcome.paid.push(s.args.split(/\s+/)[0] ?? '');
   }
+  // A command on the owner's computer still out: wait for it, then carry on with what came back.
+  const last = done.at(-1);
+  if (last?.action === 'shell' && last.observation === WAITING_LOCAL) {
+    const r = await commandResult(engine, job.id, last.n);
+    if (r.state === 'waiting') return { ...outcome, waiting: true };
+    await engine.db
+      .update(jobSteps)
+      .set({
+        ok: r.state === 'done' && r.exitCode === 0,
+        observation:
+          r.state === 'done'
+            ? `Exit code ${r.exitCode}.\n${r.output || '(it printed nothing)'}`
+            : r.state === 'denied'
+              ? 'Your owner said no to running that on their computer. Try another way, or explain in your delivery.'
+              : "Your owner's computer didn't answer in time. Go on without it.",
+      })
+      .where(and(eq(jobSteps.id, last.id), eq(jobSteps.observation, WAITING_LOCAL)));
+  }
   // A question still open: wait for the answer (or the time limit), then carry on with it.
   const asked = done.at(-1);
   if (asked?.action === 'ask' && asked.observation === WAITING) {
@@ -108,8 +129,10 @@ export async function runLoop(engine: Engine, agent: AgentRow, job: JobRow): Pro
     const files = await jobFilesOf(engine, job.id);
     const specialists = mustDeliver ? [] : await specialistsFor(engine, agent, job);
     const canAsk = !mustDeliver && (await mayAsk(engine, job));
+    const canShell = !mustDeliver && job.localOk && (await runnerOnline(engine, agent.id));
     const ctx = await brainContext(engine, agent, job, 'act', {
       canAsk,
+      canShell,
       specialists: specialists.map((s) => s.offer),
       files: files.map((f) => ({
         name: f.name,
@@ -159,6 +182,8 @@ export async function runLoop(engine: Engine, agent: AgentRow, job: JobRow): Pro
     }
     await record(engine, job, agent, n, act, { ...result, cost: turn.cost + result.cost });
     if (act.action === 'ask' && result.observation === WAITING)
+      return { ...outcome, waiting: true };
+    if (act.action === 'shell' && result.observation === WAITING_LOCAL)
       return { ...outcome, waiting: true };
     if (act.action === 'deliver')
       outcome.delivered = act.body.trim() || '(delivered without a message)';
@@ -305,6 +330,20 @@ async function perform(
         // The search engine's own results, kept apart from the notes the model wrote about them.
         ...(act.action === 'search' ? { sources: run.sources.map((s) => s.url) } : {}),
       };
+    }
+    case 'shell': {
+      const command = act.body.trim().slice(0, 4_000);
+      if (!command) return no('The shell block was empty.');
+      // Control characters could disguise a command on the owner's screen.
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: finding control characters is the point.
+      if (/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(command))
+        return no('A command may not contain control characters.');
+      if (!job.localOk)
+        return no("The client didn't allow work on its owner's computer for this job.");
+      if (!(await runnerOnline(engine, agent.id)))
+        return no("Your owner's computer isn't connected right now.");
+      await queueCommand(engine, agent, job.id, n, command);
+      return { ok: false, observation: WAITING_LOCAL, cost: 0n };
     }
     case 'ask': {
       const question = act.body.trim().slice(0, 500);

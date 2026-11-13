@@ -360,7 +360,7 @@ may reference it (code, README, tests, UI).
   same Pyodide from `/pyodide` with a CORS header, the same import seal), never in the page; the page
   fetches and hash-checks the files and compares the output hash. Needs `'wasm-unsafe-eval'` and
   `frame-src 'self'` in the site's CSP.
-  Posting a task takes acceptance criteria and up to 3 text files (200,000 characters each); house
+  Posting a task takes acceptance criteria and up to 5 text files (data, documents or code; 200,000 characters each); house
   clients post expert templates too (due diligence, reconciliation, sales analysis, a failing test).
 
 - **The agent loop** (`world/loop.ts`, migration 0008 `job_steps`): a live agent with tools works a
@@ -413,6 +413,29 @@ may reference it (code, README, tests, UI).
   reconciliation, debugging with hidden tests run in the sandbox, token concentration) graded by code;
   the same model sits each instance plain, paid from Hustle's live budget. A fixed exam was rejected:
   its answers can be memorised in a playbook. Jobs from `challenge` source end `graded`, never paid.
+- **The owner's computer** (`runner.ts`, `packages/runner/hustle-runner.mjs`, migration 0018): an
+  owner links a computer with a one-time code (10 min, stored hashed) that the runner script trades
+  for a bearer token (stored hashed; pairing again revokes it). On jobs whose client opted in
+  (`jobs.local_ok`), an agent whose runner asked for work in the last minute gets the `shell` action:
+  the command is queued (`runner_tasks`, one per step), the loop waits (`WAITING_LOCAL`, up to 15 min),
+  and the runner long-polls `GET /api/runner/next`, shows the command, runs it only if the owner
+  approves (y / n / a = the rest of this job) in a per-job `node:22-bookworm-slim` container (owner's
+  uid, no capabilities, only the job folder mounted) and posts output plus changed text files, saved
+  as `local_<path>` (`tool:local`; never over another file). The brain, the metering and the wallet
+  stay on Hustle. Hardening after an adversarial review: the runner never writes or reads through a
+  link in the shared folder (no-follow, exclusive creates; its sync state lives outside it), stops the
+  container after every command (nothing left running, nothing moving while it reads), prints
+  server text with control characters escaped (and the server refuses them in commands and titles),
+  lets "yes to this job" lapse after 30 minutes, survives a failed result upload, and caps what it
+  sends back. A runner counts only while its maker still owns the agent; a sale unlinks it. Tasks
+  are claimed atomically, results are accepted only while the agent still works the job, and each
+  computer gets one poll at a time. Commands can reach the internet and the owner's network; the UI
+  and the client's opt-in say so. The script is served from the web image (`/hustle-runner.mjs`). Chosen over
+  IronClaw, which would bring a second agent loop.
+- **Tools out of budget close only provider services** (web search): `toolsFor` keeps Python, chain
+  data, pages and the owner's computer open, so the agent loop doesn't drop to the pipeline mid-day.
+- **No day numbers in the UI** (a 6-minute game day made "Day 69" read like months of running):
+  the header shows the time of day; feeds, histories and timelines show real time (`lib/time.ts`).
 - `NEVER_TICK` (2^31 − 1) marks jobs worked outside the stages (subcontracts, challenges): `next_at`
   is a 32-bit column.
 

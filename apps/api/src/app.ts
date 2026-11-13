@@ -22,6 +22,7 @@ import {
   cancelListing,
   chooseBid,
   claimAllowance,
+  claimPairing,
   confirmRulebook,
   dayOf,
   dayReportView,
@@ -29,6 +30,7 @@ import {
   type Engine,
   fairValue,
   feedView,
+  finishCommand,
   hireAgent,
   holderView,
   jobFileForViewer,
@@ -43,15 +45,18 @@ import {
   memoriesOf,
   meView,
   mintAgent,
+  nextCommand,
   nftHistoryView,
   ownedAgent,
   ownJob,
   type PlayerRow,
+  pairRunner,
   passkeyLogin,
   playerForSession,
   postTask,
   proofView,
   rateJob,
+  runnerFor,
   sendAgentAfterJob,
   setFrozen,
   setHireRate,
@@ -62,6 +67,7 @@ import {
   takeChallenge,
   topUp,
   trainSkill,
+  unpairRunner,
   updateRulebook,
   updateStrategy,
   verifyEmailLogin,
@@ -100,7 +106,9 @@ const FeedQuery = z.object({
 });
 /** Request bodies are small JSON; a job post is the largest at ~4 KB of text. */
 const MAX_BODY_BYTES = 32 * 1024;
-const MAX_TASK_BODY_BYTES = 1_300 * 1024;
+/** Requests that carry job files: five of up to 200,000 characters, with room for JSON escaping. */
+const MAX_TASK_BODY_BYTES = 2_400 * 1024;
+const CARRIES_FILES = /^\/api\/(jobs|agents\/[^/]+\/hire|runner\/result)$/;
 
 const STATUS: Record<DomainErrorCode, 400 | 401 | 402 | 403 | 404 | 409 | 429 | 503> = {
   invalid: 400,
@@ -128,10 +136,10 @@ export function createApp(engine: Engine) {
 
   const tooLarge = (c: Context) => c.json({ error: 'Request too large' }, 413);
   const smallBodies = bodyLimit({ maxSize: MAX_BODY_BYTES, onError: tooLarge });
-  // Posting a task may carry its files (three of up to 200,000 characters each).
+  // Posting or hiring with files, and a runner sending back what a command made, carry job files.
   const taskBodies = bodyLimit({ maxSize: MAX_TASK_BODY_BYTES, onError: tooLarge });
   app.use('*', (c, next) =>
-    c.req.method === 'POST' && c.req.path === '/api/jobs'
+    c.req.method === 'POST' && CARRIES_FILES.test(c.req.path)
       ? taskBodies(c, next)
       : smallBodies(c, next),
   );
@@ -476,6 +484,58 @@ export function createApp(engine: Engine) {
   ownerAction('train', (p, a, i) => trainSkill(engine, p, a, i as never));
   ownerAction('playbook', (p, a, i) => setPlaybook(engine, p, a, i as never));
   ownerAction('hire-rate', (p, a, i) => setHireRate(engine, p, a, i as never));
+  ownerAction('runner/unpair', (p, a) => unpairRunner(engine, p, a));
+  // The owner links a computer: a one-time code for the runner script (shown once, 10 minutes).
+  app.post('/agents/:id/runner', async (c) => {
+    const player = me(c);
+    ownerActions.take(player.id);
+    const code = await lane(async () =>
+      pairRunner(engine, player, await ownedAgent(engine, player, c.req.param('id'))),
+    );
+    return send(c, code, 201);
+  });
+
+  // ── The runner on an owner's computer: a bearer token, no cookie ──────────────────────────────
+  const runnerPairs = new RateLimit(
+    10,
+    10 * 60_000,
+    'Too many pairing attempts. Wait a few minutes.',
+  );
+  const runnerOf = async (c: Context) => {
+    const token = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
+    const runner = await runnerFor(engine, token);
+    if (!runner)
+      throw new DomainError('unauthorized', 'Pair this computer again from the agent page');
+    return runner;
+  };
+  app.post('/runner/pair', async (c) => {
+    runnerPairs.take(clientKey(c));
+    return send(c, await claimPairing(engine, (await body(c)) as never), 201);
+  });
+  // Long poll: the next command for this computer's agent, or none after about 25 seconds.
+  // One poll in flight per computer: more would only load the database.
+  const polling = new Set<string>();
+  app.get('/runner/next', async (c) => {
+    const runner = await runnerOf(c);
+    if (polling.has(runner.id))
+      throw new DomainError('rate_limited', 'This computer is already waiting for work');
+    polling.add(runner.id);
+    try {
+      const until = Date.now() + 25_000;
+      for (;;) {
+        const task = await nextCommand(engine, runner);
+        if (task || Date.now() > until || c.req.raw.signal.aborted) return send(c, { task });
+        await new Promise((r) => setTimeout(r, 1_500));
+      }
+    } finally {
+      polling.delete(runner.id);
+    }
+  });
+  app.post('/runner/result', async (c) => {
+    const runner = await runnerOf(c);
+    await finishCommand(engine, runner, (await body(c)) as never);
+    return send(c, { ok: true });
+  });
   // The owner sends the agent at a fresh challenge; it works it in the background.
   app.post('/agents/:id/challenge', async (c) => {
     const player = me(c);

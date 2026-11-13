@@ -12,6 +12,7 @@ import { NftHistory } from '@/components/agents/nft-history';
 import { MemoryPanel, PlaybookPanel } from '@/components/agents/playbook';
 import { ProofTab } from '@/components/agents/proof';
 import { RulebookEditor } from '@/components/agents/rulebook-editor';
+import { RunnerPanel } from '@/components/agents/runner';
 import {
   ActivityHistory,
   ActivityPanel,
@@ -168,6 +169,7 @@ function Profile() {
               <HireRateControls agent={agent} />
             </Panel>
           )}
+          {owner && <RunnerPanel agent={agent} />}
           {owner && !agent.needsRulebookConfirm && (
             <Panel title="Sell">
               <SellControls agent={agent} />

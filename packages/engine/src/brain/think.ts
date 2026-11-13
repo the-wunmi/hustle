@@ -489,6 +489,7 @@ const ACT_KINDS = new Set([
   'fetch',
   'hire',
   'ask',
+  'shell',
   'write',
   'pay',
   'deliver',

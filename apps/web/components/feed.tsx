@@ -2,8 +2,8 @@
 
 import type { AgentMood, FeedEventView, FeedKind } from '@hustle/core/browser';
 import Link from 'next/link';
-import { useWorld } from '@/lib/api';
 import { fmt } from '@/lib/money';
+import { realTime } from '@/lib/time';
 import { Portrait } from './portrait';
 
 /** Which way money moved for the agent in each kind of event; unlisted kinds show no sign. */
@@ -53,28 +53,16 @@ const KIND_ICON: Partial<Record<FeedKind, string>> = {
   approval_resolved: '✅',
 };
 
-/**
- * "Day N, HH:00". Day-end events are stamped on the tick that starts the next day, so their own
- * day reads as "end of day N" rather than "Day N, 00:00" (which would sort after the next day).
- */
-export function gameTime(day: number, tick: number, dayTicks: number): string {
-  const tickDay = Math.floor(tick / dayTicks) + 1;
-  if (tickDay > day) return `End of day ${day}`;
-  return `Day ${day}, ${tickClock(tick, dayTicks)}`;
-}
-
 export const tickClock = (tick: number, dayTicks: number) =>
   `${String(Math.floor(((tick % dayTicks) / dayTicks) * 24)).padStart(2, '0')}:00`;
 
 export function FeedItem({
   event,
   fresh = false,
-  dayTicks,
   jobLink = true,
 }: {
   event: FeedEventView;
   fresh?: boolean;
-  dayTicks: number;
   jobLink?: boolean;
 }) {
   // A blocked payment in shield tone moved nothing; one in bad tone went through and was lost.
@@ -117,7 +105,7 @@ export function FeedItem({
           {event.text}
         </p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
-          <span className="tnum">{gameTime(event.day, event.tick, dayTicks)}</span>
+          <span className="tnum">{realTime(event.createdAt)}</span>
           {mine && <span className="font-semibold text-brand">Your agent</span>}
           {event.scope === 'owner' && <span>Only you see this</span>}
           {event.jobId && jobLink && (
@@ -155,19 +143,11 @@ export function FeedList({
   /** Off on a job's own page, where "View job" would link to itself. */
   jobLinks?: boolean;
 }) {
-  const { data: world } = useWorld();
-  const dayTicks = world?.dayTicks ?? 180;
   if (events.length === 0) return <>{empty ?? null}</>;
   return (
     <ol className="space-y-1" aria-label="Activity">
       {events.map((e) => (
-        <FeedItem
-          key={e.seq}
-          event={e}
-          fresh={fresh?.has(e.seq)}
-          dayTicks={dayTicks}
-          jobLink={jobLinks}
-        />
+        <FeedItem key={e.seq} event={e} fresh={fresh?.has(e.seq)} jobLink={jobLinks} />
       ))}
     </ol>
   );

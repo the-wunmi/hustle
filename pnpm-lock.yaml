@@ -240,6 +240,8 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/runner: {}
+
   packages/sandbox:
     dependencies:
       pyodide:

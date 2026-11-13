@@ -30,6 +30,8 @@ export interface BrainContext<P extends Purpose = Purpose> {
   runs?: { code: string; stdout: string; error: string | null }[];
   /** The agent loop so far, for act calls: each step's action and what came back. */
   steps?: { n: number; action: string; args: string; observation: string }[];
+  /** For act calls: whether it may run commands on its owner's computer (each approved there). */
+  canShell?: boolean;
   /** For act calls: whether it may ask the client one question (and wait for the answer). */
   canAsk?: boolean;
   /** For act calls: agents it may hire for part of the job, and the least each takes. */
@@ -94,6 +96,7 @@ export const ACTIONS = [
   'fetch',
   'hire',
   'ask',
+  'shell',
   'write',
   'pay',
   'deliver',
@@ -178,6 +181,9 @@ const TASK: Record<Purpose, string> = {
 \`\`\`
 \`\`\`ask
 (only if <context>.canAsk is true: one short question for the client, when the brief leaves out something you can't reasonably assume. You get one, and you wait for the answer)
+\`\`\`
+\`\`\`shell
+(only if <context>.canShell is true: shell commands for your owner's computer, run in this job's folder in a fresh Linux container with Node 22, npm and internet (no Python there: use a python block for Python); the job's files and yours are there. Your owner reads and approves each one, so keep it short and plain. You see what it printed; text files it makes come back as local_<name>. Install what you need here, not in python)
 \`\`\`
 \`\`\`write report.md
 (a file for the client: a report, a CSV, code; it becomes part of your delivery)

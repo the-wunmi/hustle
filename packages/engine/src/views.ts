@@ -81,8 +81,10 @@ import { liveAiBudget } from './brain/budget.ts';
 import { brainSourceFor } from './brain/think.ts';
 import { dayOf, type Engine, hourOf, toolsFor } from './context.ts';
 import type { PlayerRow } from './players.ts';
+import { runnerView } from './runner.ts';
 import { computeDayReport } from './world/day.ts';
 import { type JobRow, jobSnapshot } from './world/jobs.ts';
+import { WAITING, WAITING_LOCAL } from './world/loop.ts';
 import { loadPrices } from './world/prices.ts';
 
 const s = (v: bigint) => v.toString();
@@ -288,6 +290,7 @@ export async function agentView(
     ...summary,
     ownerAccountId: owner?.accountId ?? '',
     hireRate: row.hireRate === null ? null : s(row.hireRate),
+    runner: viewer?.id === row.ownerId ? await runnerView(engine, row.id) : null,
     challenges: await challengesOf(engine, row.id),
     creator: creator
       ? { name: creator.name, royaltyBps: ROYALTY_BPS, isMe: viewer?.id === creator.id }
@@ -721,6 +724,8 @@ export async function jobView(
       thought: methodVisible ? st.thought : null,
       input: methodVisible ? st.input : null,
       observation: methodVisible ? st.observation : null,
+      waiting: st.observation === WAITING || st.observation === WAITING_LOCAL,
+      ranLocally: st.action === 'shell' && st.observation.startsWith('Exit code '),
       ok: st.ok,
       cost: s(st.cost),
       createdAt: st.createdAt.toISOString(),
@@ -760,6 +765,7 @@ export async function jobView(
     deliverable: workVisible ? row.deliverable : null,
     workHash: row.workHash,
     embeddedInstructions: row.embeddedInstructions,
+    localOk: row.localOk,
     question: methodVisible && row.question ? { text: row.question, answer: row.answer } : null,
     receipts: calls
       .filter((c) => c.status === 'done' && c.inferenceId)

@@ -12,8 +12,8 @@ import { useState } from 'react';
 import { useWorld } from '@/lib/api';
 import { fmt } from '@/lib/money';
 import { quoted } from '@/lib/text';
+import { realTime } from '@/lib/time';
 import { TxLink } from '../agents/proof';
-import { tickClock } from '../feed';
 import { Badge, Money } from '../ui';
 
 type Entry =
@@ -46,14 +46,6 @@ function entriesOf(job: JobView): Entry[] {
     ...job.txs.map((t): Entry => ({ type: 'tx', at: t.createdAt, tick: t.tick ?? null, tx: t })),
   ];
   return entries.sort((a, b) => a.at.localeCompare(b.at));
-}
-
-/** "Day N, HH:00" from a game tick, or nothing when the API doesn't know it. */
-function useGameTime(): (tick: number | null) => string {
-  const { data: world } = useWorld();
-  const dayTicks = world?.dayTicks ?? 180;
-  return (tick) =>
-    tick === null ? '' : `Day ${Math.floor(tick / dayTicks) + 1}, ${tickClock(tick, dayTicks)}`;
 }
 
 function Disclosure({ summary, children }: { summary: string; children: React.ReactNode }) {
@@ -303,15 +295,7 @@ const DOT: Record<Entry['type'], string> = {
   tx: 'bg-surface-2',
 };
 
-function EntryList({
-  entries,
-  time,
-  explorer = null,
-}: {
-  entries: Entry[];
-  time: (tick: number | null) => string;
-  explorer?: string | null;
-}) {
+function EntryList({ entries, explorer = null }: { entries: Entry[]; explorer?: string | null }) {
   return (
     <ol className="relative space-y-4 border-l-2 border-line pl-5">
       {entries.map((e) => {
@@ -323,7 +307,7 @@ function EntryList({
               className={`absolute top-1.5 -left-[27px] size-3 rounded-full border-2 border-line-strong ${e.type === 'spend' && e.spend.status === 'blocked' ? 'bg-shield' : DOT[e.type]}`}
               aria-hidden="true"
             />
-            {e.tick !== null && <p className="text-xs text-muted tnum">{time(e.tick)}</p>}
+            <p className="text-xs text-muted tnum">{realTime(e.at)}</p>
             {e.type === 'thinking' && <ThinkingRow r={e.receipt} />}
             {e.type === 'spend' && <SpendRow s={e.spend} />}
             {e.type === 'tx' && <TxRow tx={e.tx} explorer={explorer} />}
@@ -336,7 +320,6 @@ function EntryList({
 
 /** Every thinking cost and payment behind one job, in order; chain calls for the curious. */
 export function HowItRan({ job }: { job: JobView }) {
-  const time = useGameTime();
   const { data: world } = useWorld();
   const chainMode = world?.modes.chain;
   const all = entriesOf(job);
@@ -388,7 +371,7 @@ export function HowItRan({ job }: { job: JobView }) {
       {money.length === 0 ? (
         <p className="text-sm text-ink-2">Nothing has happened on this job yet.</p>
       ) : (
-        <EntryList entries={money} time={time} />
+        <EntryList entries={money} />
       )}
       {chain.length > 0 && (
         <details className="group mt-5 rounded-xl border border-line p-3">
@@ -413,7 +396,6 @@ export function HowItRan({ job }: { job: JobView }) {
           <div className="mt-3">
             <EntryList
               entries={chain}
-              time={time}
               explorer={chainMode === 'testnet' ? TESTNET_EXPLORER : null}
             />
           </div>

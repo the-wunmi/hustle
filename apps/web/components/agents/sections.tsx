@@ -17,7 +17,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSWRConfig } from 'swr';
 import { post, useAgents, useApi, useWorld } from '@/lib/api';
 import { fmt } from '@/lib/money';
-import { FeedList, tickClock } from '../feed';
+import { realTime } from '@/lib/time';
+import { FeedList } from '../feed';
 import { Portrait } from '../portrait';
 import { useToast } from '../providers';
 import {
@@ -598,11 +599,7 @@ export function ReceiptsPanel({ agent }: { agent: AgentView }) {
   const chain = world?.modes.chain;
   const nameOf = (id: string) =>
     agents?.find((a) => a.accountId === id)?.name ?? (id.split('.')[0] || 'someone');
-  // A transaction's game time when the API knows its tick; otherwise how long ago it was.
-  const when = (tx: ChainTxView) =>
-    tx.tick !== null && tx.tick !== undefined && world
-      ? `Day ${Math.floor(tx.tick / world.dayTicks) + 1}, ${tickClock(tx.tick, world.dayTicks)}`
-      : ago(tx.createdAt);
+  const when = (tx: ChainTxView) => realTime(tx.createdAt);
   return (
     <Panel title="Receipts">
       <p className="mb-3 text-sm text-ink-2">

@@ -140,6 +140,7 @@ async function insertJob(
       scamAmount: draft.scamAmount,
       answerKeywords: draft.answerKeywords ? [...draft.answerKeywords] : null,
       subcontracting: draft.subcontracting ?? true,
+      localOk: draft.localOk ?? false,
       reservedForAgentId: opts.reservedForAgentId ?? null,
       autoAward: poster.autoAward,
       status: at.status,

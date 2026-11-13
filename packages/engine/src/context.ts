@@ -423,12 +423,16 @@ function reviveBrains(value: unknown): Record<Tier, Brain> {
 // ── Clock helpers ───────────────────────────────────────────────────────────────────────────────
 
 /**
- * The tools this agent will really use: provider tools need a live brain (which house agents never
- * have) and room in today's tool budget. Bid floors, the per-job cap and quality price only these.
+ * The tools this agent will really use: every tool needs a live brain (which house agents never
+ * have); a provider service (web search, billed by NEAR AI per use) also needs room in today's tool
+ * budget. The rest (Python, chain data, pages, the owner's computer) stay open all day, so the agent
+ * loop doesn't stop when search does. Bid floors, the per-job cap and quality price only these.
  */
 export const toolsFor = (engine: Engine, agent: { ownerId: string }): readonly ToolSpec[] =>
-  engine.nearai.mode === 'live' && engine.toolsOpen && !engine.houseOwners.has(agent.ownerId)
-    ? engine.tools
+  engine.nearai.mode === 'live' && !engine.houseOwners.has(agent.ownerId)
+    ? engine.toolsOpen
+      ? engine.tools
+      : engine.tools.filter((t) => !t.service)
     : [];
 
 export const dayOf = (engine: Engine, tick = engine.clock.tick): number =>

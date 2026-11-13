@@ -12,9 +12,12 @@ import {
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useId, useState } from 'react';
 
-const MAX_FILES = 3;
+const MAX_FILES = 5;
 const MAX_FILE_CHARS = 200_000;
 const MAX_CRITERIA = 1_000;
+/** Plain-text kinds a client may attach: data, documents and source code (the API checks the same). */
+const TEXT_KINDS =
+  /\.(csv|json|txt|md|tsv|py|html|css|js|mjs|cjs|jsx|ts|tsx|sql|yaml|yml|xml|svg|toml|sh)$/i;
 
 import { useSWRConfig } from 'swr';
 import { useToast } from '@/components/providers';
@@ -93,6 +96,7 @@ function PostForm({ wallet }: { wallet: string }) {
   const [pick, setPick] = useState<'auto' | 'me'>('auto');
   const [criteria, setCriteria] = useState('');
   const [subcontracting, setSubcontracting] = useState(true);
+  const [localOk, setLocalOk] = useState(false);
   const [files, setFiles] = useState<{ name: string; content: string }[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -113,8 +117,8 @@ function PostForm({ wallet }: { wallet: string }) {
     if (!list) return;
     let next = [...files];
     for (const f of Array.from(list)) {
-      if (!/^[\w.-]{1,80}$/.test(f.name) || !/\.(csv|json|txt|md|tsv|py)$/i.test(f.name)) {
-        setFileError(`${f.name}: use a plain name ending in .csv, .json, .txt, .md, .tsv or .py.`);
+      if (!/^[\w.-]{1,80}$/.test(f.name) || !TEXT_KINDS.test(f.name)) {
+        setFileError(`${f.name}: use a plain name and a text file (data, a document or code).`);
         continue;
       }
       const content = await f.text();
@@ -166,6 +170,7 @@ function PostForm({ wallet }: { wallet: string }) {
         category,
         ...(criteria.trim() ? { criteria: criteria.trim() } : {}),
         subcontracting,
+        localOk,
         files,
       };
       const job = hiring
@@ -253,13 +258,13 @@ function PostForm({ wallet }: { wallet: string }) {
             label="Files to work on (optional)"
             htmlFor={ids.files}
             error={fileError}
-            hint="Up to three text files (CSV, JSON, TXT, MD, TSV, PY). Agents with a sandbox analyse them in Python; you (and the agent's owner) can re-run that analysis in your browser."
+            hint="Up to five text files: data, documents or code. Agents with a sandbox analyse them in Python; you (and the agent's owner) can re-run that analysis in your browser."
           >
             <input
               id={ids.files}
               type="file"
               multiple
-              accept=".csv,.json,.txt,.md,.tsv,.py"
+              accept=".csv,.json,.txt,.md,.tsv,.py,.html,.css,.js,.mjs,.cjs,.jsx,.ts,.tsx,.sql,.yaml,.yml,.xml,.svg,.toml,.sh"
               onChange={(e) => {
                 void addFiles(e.target.files);
                 e.target.value = '';
@@ -298,6 +303,23 @@ function PostForm({ wallet }: { wallet: string }) {
               <span className="block text-sm text-ink-2">
                 It may hire another agent for one part, sharing only that part's brief and the files
                 it names, never your full brief. Untick to keep the work with one agent.
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer gap-3 rounded-xl border-2 border-line p-3 has-[:checked]:border-line-strong has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-brand">
+            <input
+              type="checkbox"
+              checked={localOk}
+              onChange={(e) => setLocalOk(e.target.checked)}
+              className="mt-1 size-4 accent-[var(--brand)]"
+            />
+            <span className="min-w-0">
+              <span className="block font-semibold">Let it work on its owner's computer</span>
+              <span className="block text-sm text-ink-2">
+                For work the sandbox can't do: the open internet, installing tools, a real build.
+                Your brief and files go to the owner's machine, which has the open internet; they
+                approve every command. Only allow it for files you'd share with the agent's owner.
+                That work can't be re-run by Hustle.
               </span>
             </span>
           </label>

@@ -53,6 +53,7 @@ import {
 import type { PlayerRow } from './players.ts';
 import { ensurePlayerAccount } from './players.ts';
 import { book, chainKey, post } from './record.ts';
+import { unpairRunner } from './runner.ts';
 import { summariesOf } from './views.ts';
 
 /** The treasury's cut of each sale, in basis points (the market contract is set up with it). */
@@ -234,6 +235,8 @@ async function saleSteps(input: SaleInput): Promise<SaleResult> {
     recordSale(engine, db, input, sent.value.txHash, balance),
   );
   await payRoyalty(engine, input);
+  // The seller's linked computer stops working for the agent with the sale.
+  await unpairRunner(engine, null, agent);
   return { kind: 'sold', agent };
 }
 

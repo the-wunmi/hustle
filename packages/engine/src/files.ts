@@ -6,19 +6,20 @@ import type { Engine } from './context.ts';
 /** Most a single job file may hold (text). */
 export const MAX_FILE_CHARS = 200_000;
 /** Most files a client attaches to one task. */
-export const MAX_CLIENT_FILES = 3;
+export const MAX_CLIENT_FILES = 5;
+/** Plain-text kinds a job file may be: data, documents and source code (served as downloads only). */
+const TEXT_KINDS =
+  /\.(csv|json|txt|md|tsv|py|html|css|js|mjs|cjs|jsx|ts|tsx|sql|yaml|yml|xml|svg|toml|sh)$/i;
 
 export type JobFile = typeof jobFiles.$inferSelect;
 
 /** A file name the sandbox can open as is: letters, digits, `._-`, a text extension. */
 export const isFileName = (name: string): boolean =>
-  /^[\w.-]{1,80}$/.test(name) && /\.(csv|json|txt|md|tsv|py)$/i.test(name) && !name.startsWith('.');
+  /^[\w.-]{1,80}$/.test(name) && TEXT_KINDS.test(name) && !name.startsWith('.');
 
 /** Files an agent may write as part of its work: any plain-text kind (served as downloads only). */
 export const isAgentFileName = (name: string): boolean =>
-  /^[\w.-]{1,80}$/.test(name) &&
-  /\.(csv|json|txt|md|tsv|py|html|css|js|ts|sql|yaml|yml|xml|svg)$/i.test(name) &&
-  !name.startsWith('.');
+  /^[\w.-]{1,80}$/.test(name) && TEXT_KINDS.test(name) && !name.startsWith('.');
 /** Most files, and characters in each, an agent writes for one job. */
 export const MAX_AGENT_FILES = 10;
 export const MAX_AGENT_FILE_CHARS = 100_000;

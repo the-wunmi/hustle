@@ -17,6 +17,14 @@ export {
 export * from './players.ts';
 export { isPresent, markPresent } from './presence.ts';
 export * from './record.ts';
+export {
+  claimPairing,
+  finishCommand,
+  nextCommand,
+  pairRunner,
+  runnerFor,
+  unpairRunner,
+} from './runner.ts';
 export * from './seed.ts';
 export * from './trade.ts';
 export * from './views.ts';

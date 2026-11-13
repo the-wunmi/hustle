@@ -109,8 +109,8 @@ async function endDaySteps(day: number): Promise<{ failed: string[] }> {
         kind: 'event',
         tone: 'neutral',
         text: event
-          ? `Day ${day + 1}: ${event.name}. ${event.description}`
-          : `Day ${day + 1} begins. A quiet market.`,
+          ? `A new day: ${event.name}. ${event.description}`
+          : 'A new day begins. A quiet market.',
       },
       db,
     );
@@ -340,7 +340,7 @@ async function writeReport(
       {
         kind: 'day_ended',
         tone: profit >= 0n ? 'money' : 'bad',
-        text: `Day ${day} report for ${agent.name}: ${data.jobsWon} job${data.jobsWon === 1 ? '' : 's'}, ${profit >= 0n ? 'profit' : 'loss'} ${formatUsd(profit < 0n ? -profit : profit)}.`,
+        text: `${agent.name}'s day report: ${data.jobsWon} job${data.jobsWon === 1 ? '' : 's'}, ${profit >= 0n ? 'profit' : 'loss'} ${formatUsd(profit < 0n ? -profit : profit)}.`,
         agentId: agent.id,
         playerId: agent.ownerId,
         scope: 'owner',

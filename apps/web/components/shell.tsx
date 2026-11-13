@@ -127,7 +127,7 @@ export function GameClock({ world: given }: { world?: WorldView }) {
   return (
     <div
       className="flex items-center gap-1.5 rounded-full border-2 border-line bg-surface px-2 py-1 sm:gap-2 sm:px-2.5"
-      title={`${Math.round(progress * 100)}% through day ${world.day}`}
+      title={`Game time: ${Math.round(progress * 100)}% through today. A game day lasts a few minutes; upkeep is charged when it ends.`}
     >
       <svg viewBox="0 0 24 24" className="hidden size-5 -rotate-90 sm:block" aria-hidden="true">
         <circle cx="12" cy="12" r={r} fill="none" stroke="var(--line)" strokeWidth="4" />
@@ -142,7 +142,7 @@ export function GameClock({ world: given }: { world?: WorldView }) {
         />
       </svg>
       <span className="text-sm font-semibold whitespace-nowrap tnum">
-        <span className="sr-only">Game time: </span>Day {world.day},{' '}
+        <span className="sr-only">Game time: </span>
         {String(world.hour).padStart(2, '0')}:00
       </span>
       {world.event && (
@@ -520,10 +520,10 @@ function SandboxChip() {
                   disabled={!me || !!busy}
                   onClick={() =>
                     run('day', async () => {
-                      const r = await post<{ day: number }>('/api/sandbox/advance', {
+                      await post('/api/sandbox/advance', {
                         to: 'day_end',
                       });
-                      toast(`Day ended. It's now day ${r.day}.`, 'good');
+                      toast('Day ended: upkeep charged and day reports written.', 'good');
                     })
                   }
                 >

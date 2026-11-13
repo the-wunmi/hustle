@@ -158,9 +158,12 @@ export async function runTool(
 /** Reads whether today's live budget still has room for a tool call (once a tick). */
 export async function refreshToolsOpen(engine: Engine): Promise<void> {
   if (engine.nearai.mode !== 'live' || engine.tools.length === 0) return;
-  const typical = engine.tools.reduce((t, s) => {
-    const c = toolCost(s, engine.brains.standard) * 1000n;
-    return c > t ? c : t;
-  }, 0n);
+  // Only provider services draw on the tool budget, so only they set the typical cost.
+  const typical = engine.tools
+    .filter((s) => s.service)
+    .reduce((t, s) => {
+      const c = toolCost(s, engine.brains.standard) * 1000n;
+      return c > t ? c : t;
+    }, 0n);
   engine.toolsOpen = await toolsOpenToday(engine, typical);
 }

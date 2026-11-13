@@ -40,7 +40,13 @@ const NO_NUL = 'Text files only: this one contains a NUL character';
 export const MAX_CRITERIA = 1_000;
 
 export const PostTask = z.object({
-  title: z.string().trim().min(4).max(MAX_JOB_TITLE),
+  title: z
+    .string()
+    .trim()
+    .min(4)
+    .max(MAX_JOB_TITLE)
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: finding control characters is the point.
+    .refine((t) => !/[\u0000-\u001f\u007f-\u009f]/.test(t), 'A title is one line of plain text'),
   body: z.string().trim().min(10).max(MAX_JOB_BODY),
   category: Category,
   budget: MicroAmount.refine(
@@ -50,6 +56,8 @@ export const PostTask = z.object({
   autoAward: z.boolean().default(true),
   /** Whether the agent may hire another agent for part of the work (sharing only that part). */
   subcontracting: z.boolean().default(true),
+  /** Whether the agent may run commands on its owner's computer (internet, installing tools). */
+  localOk: z.boolean().default(false),
   /** What done looks like: agents read it with the brief. */
   criteria: z.string().trim().max(MAX_CRITERIA).refine(noNul, NO_NUL).optional(),
   /** Text files for the agent to work on (CSV, JSON, Markdown…), read in its sandbox. */
@@ -108,6 +116,7 @@ export async function postTask(
       criteria: data.criteria ?? null,
       files: data.files,
       subcontracting: data.subcontracting,
+      localOk: data.localOk,
       budget: data.budget,
       minLevel: 1,
       clientName: player.name,

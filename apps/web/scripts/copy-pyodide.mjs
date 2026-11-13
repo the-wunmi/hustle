@@ -1,4 +1,5 @@
-// Copies Pyodide and the sandbox's Python packages into public/pyodide, so the browser re-run of an
+// Copies Pyodide and the sandbox's Python packages into public/pyodide (and the runner script into
+// public), so the browser re-run of an
 // agent's analysis uses the very same interpreter and wheels as the server's sandbox, from this site
 // (no CDN). Fetches the wheels first if they aren't cached yet (build time only).
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -31,3 +32,10 @@ for (const f of [...core, ...wheels()]) {
   if (!existsSync(target)) copyFileSync(join(pyodideDir, f), target);
 }
 console.log(`pyodide ready in public/pyodide (${core.length + wheels().length} files)`);
+
+// The runner script owners download to link their computer (one file, no dependencies), always the
+// current one.
+copyFileSync(
+  join(here, '../../../packages/runner/hustle-runner.mjs'),
+  join(here, '../public/hustle-runner.mjs'),
+);

@@ -9,6 +9,7 @@ import {
   ledger,
   nearaiBudget,
   players,
+  runnerTasks,
   sandboxRuns,
   spends,
 } from '@hustle/db';
@@ -20,8 +21,17 @@ import { loadAgent } from '../src/agents/state.ts';
 import { liveAiBudget, usdToNano, utcDay } from '../src/brain/budget.ts';
 import { scriptedResponse } from '../src/brain/scripted.ts';
 import { parseActReply, think } from '../src/brain/think.ts';
+import { toolsFor } from '../src/context.ts';
 import { saveJobFile } from '../src/files.ts';
 import { answerQuestion, postTask } from '../src/jobs.ts';
+import {
+  claimPairing,
+  finishCommand,
+  nextCommand,
+  pairRunner,
+  runnerFor,
+  runnerOnline,
+} from '../src/runner.ts';
 import { tokenIdsIn } from '../src/tools/chain-data.ts';
 import { seenUrl } from '../src/tools/fetch.ts';
 import { runTool, usableTools } from '../src/tools/index.ts';
@@ -684,5 +694,155 @@ describe('live NEAR AI for players only, under a daily budget', () => {
       ok: false,
       reason: expect.stringMatching(/example.com/),
     });
+  });
+
+  it('an agent runs a command on its owner’s computer: paired, approved there, results back into the loop', async () => {
+    w.engine.liveAiBudgetNano = usdToNano('1.00');
+    w.engine.toolsOpen = true;
+    const mine = await playerAgent();
+    const [owner] = await w.engine.db.select().from(players).where(eq(players.id, mine.ownerId));
+    // Pairing: a one-time code, traded once for a token.
+    const { code } = await pairRunner(w.engine, owner!, mine);
+    await expect(claimPairing(w.engine, { code: 'ZZZZ-ZZZZ' })).rejects.toMatchObject({
+      code: 'invalid',
+    });
+    const { token } = await claimPairing(w.engine, { code, machine: 'darwin arm64, Docker' });
+    await expect(claimPairing(w.engine, { code })).rejects.toMatchObject({ code: 'invalid' });
+    const runner = (await runnerFor(w.engine, token))!;
+    expect(runner.agentId).toBe(mine.id);
+    expect(await runnerFor(w.engine, 'hr_wrong')).toBeNull();
+
+    const client = await w.signUp(`local${seq}@example.com`, `Local${seq}`);
+    const job = await postTask(w.engine, client, {
+      title: 'Make our tests pass',
+      body: 'Our JavaScript tests fail. Install the dependencies, find the bug, fix it.',
+      category: 'code_review',
+      budget: usd('0.70').toString(),
+      localOk: true,
+      files: [{ name: 'sum.js', content: 'module.exports = (a, b) => a - b;\n' }],
+    });
+    actScript.push(
+      `I need to run the tests.\n${BT}shell\nnpm install && npm test\n${BT}`,
+      `The tests ran.\n${BT}deliver\nFixed: sum subtracted instead of adding. Tests pass.\n${BT}`,
+    );
+    const [bid] = await w.engine.db
+      .insert(bids)
+      .values({
+        jobId: job.id,
+        agentId: mine.id,
+        price: usd('0.60'),
+        pitch: 't',
+        status: 'open',
+        createdTick: 0,
+      })
+      .returning();
+    await awardJob(w.engine, job, bid!.id);
+    const tick = async () => {
+      await w.engine.db.update(jobs).set({ nextAt: 0 }).where(eq(jobs.id, job.id));
+      await advanceWork(w.engine);
+      await backgroundIdle();
+    };
+    // The runner has asked for work (so it's online) before the agent's turn.
+    expect(await nextCommand(w.engine, runner)).toBeNull();
+    for (let i = 0; i < 3; i++) await tick();
+    const task = await nextCommand(w.engine, runner);
+    expect(task).toMatchObject({ jobId: job.id, command: 'npm install && npm test' });
+    expect(task!.files.map((f) => f.name)).toEqual(['sum.js']);
+    // Another computer can't answer for it.
+    const other = await playerAgent();
+    const [otherOwner] = await w.engine.db
+      .select()
+      .from(players)
+      .where(eq(players.id, other.ownerId));
+    const { code: c2 } = await pairRunner(w.engine, otherOwner!, other);
+    const stranger = (await runnerFor(
+      w.engine,
+      (
+        await claimPairing(w.engine, { code: c2 })
+      ).token,
+    ))!;
+    await expect(
+      finishCommand(w.engine, stranger, { id: task!.id, approved: true, output: 'fake' }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    await finishCommand(w.engine, runner, {
+      id: task!.id,
+      approved: true,
+      exitCode: 0,
+      output: 'PASS sum.test.js',
+      files: [{ name: 'sum.js', content: 'module.exports = (a, b) => a + b;\n' }],
+    });
+    for (let i = 0; i < 3; i++) await tick();
+    const steps = await w.engine.db.select().from(jobSteps).where(eq(jobSteps.jobId, job.id));
+    expect(steps.map((s) => s.action)).toEqual(['shell', 'deliver']);
+    expect(steps[0]).toMatchObject({ ok: true });
+    expect(steps[0]!.observation).toContain('PASS sum.test.js');
+    const files = await w.engine.db.select().from(jobFiles).where(eq(jobFiles.jobId, job.id));
+    expect(files.find((f) => f.name === 'local_sum.js')).toMatchObject({ source: 'tool:local' });
+    // The client's own file is untouched.
+    expect(files.find((f) => f.name === 'sum.js')?.content).toContain('a - b');
+    // A stranger sees that a command ran, not what it was.
+    const [row] = await w.engine.db.select().from(jobs).where(eq(jobs.id, job.id));
+    const pub = await jobView(w.engine, row!, null);
+    expect(pub.steps[0]).toMatchObject({
+      action: 'shell',
+      input: null,
+      observation: null,
+      args: '',
+    });
+  }, 180_000);
+
+  it('no command without the client’s say-so, or with the owner’s computer offline', async () => {
+    w.engine.liveAiBudgetNano = usdToNano('1.00');
+    w.engine.toolsOpen = true;
+    const mine = await playerAgent();
+    const job = await aJob('research');
+    actScript.push(
+      `Run it.\n${BT}shell\ncurl https://example.com\n${BT}`,
+      `Fine.\n${BT}deliver\nDone without it.\n${BT}`,
+    );
+    const [bid] = await w.engine.db
+      .insert(bids)
+      .values({
+        jobId: job.id,
+        agentId: mine.id,
+        price: usd('0.70'),
+        pitch: 't',
+        status: 'open',
+        createdTick: 0,
+      })
+      .returning();
+    await awardJob(w.engine, job, bid!.id);
+    for (let i = 0; i < 4; i++) {
+      await w.engine.db.update(jobs).set({ nextAt: 0 }).where(eq(jobs.id, job.id));
+      await advanceWork(w.engine);
+      await backgroundIdle();
+    }
+    const steps = await w.engine.db.select().from(jobSteps).where(eq(jobSteps.jobId, job.id));
+    expect(steps[0]).toMatchObject({ action: 'shell', ok: false });
+    expect(steps[0]!.observation).toMatch(/didn't allow/);
+    const tasks = await w.engine.db.select().from(runnerTasks).where(eq(runnerTasks.jobId, job.id));
+    expect(tasks).toHaveLength(0);
+  }, 180_000);
+
+  it('when search is out of budget for the day, the other tools (and the agent loop) stay open', async () => {
+    const mine = await playerAgent();
+    w.engine.toolsOpen = false;
+    const ids = toolsFor(w.engine, mine).map((t) => t.id);
+    expect(ids).not.toContain('web_search');
+    expect(ids).toEqual(expect.arrayContaining(['python', 'chain_data', 'fetch']));
+    w.engine.toolsOpen = true;
+    expect(toolsFor(w.engine, mine).map((t) => t.id)).toContain('web_search');
+  });
+
+  it('a linked computer stops counting once the agent changes hands', async () => {
+    const mine = await playerAgent();
+    const [owner] = await w.engine.db.select().from(players).where(eq(players.id, mine.ownerId));
+    const { code } = await pairRunner(w.engine, owner!, mine);
+    const { token } = await claimPairing(w.engine, { code });
+    expect(await runnerFor(w.engine, token)).not.toBeNull();
+    const buyer = await w.signUp(`newowner${seq}@example.com`, `NewOwner${seq}`);
+    await w.engine.db.update(agents).set({ ownerId: buyer.id }).where(eq(agents.id, mine.id));
+    expect(await runnerFor(w.engine, token)).toBeNull();
+    expect(await runnerOnline(w.engine, mine.id)).toBe(false);
   });
 });

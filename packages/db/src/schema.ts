@@ -258,6 +258,11 @@ export const jobs = pgTable(
     question: text('question'),
     answer: text('answer'),
     askedTick: integer('asked_tick'),
+    /**
+     * Whether the working agent may run commands on its owner's computer (internet, installing
+     * tools), each approved there by the owner: the client's choice, off by default.
+     */
+    localOk: boolean('local_ok').notNull().default(false),
     /** Whether the working agent may hire another agent for part of it (the client's choice). */
     subcontracting: boolean('subcontracting').notNull().default(true),
     /** A subcontract: the job it is part of, and the hiring agent's loop step that asked for it. */
@@ -747,5 +752,62 @@ export const simTxs = pgTable(
     uniqueIndex('sim_txs_hash_uq').on(t.hash),
     index('sim_txs_key_ix').on(t.key),
     index('sim_txs_args_job_ix').using('gin', sql`${t.args} jsonb_path_ops`),
+  ],
+);
+
+/**
+ * An owner's computer linked to their agent (one per agent): the runner script authenticates with a
+ * token whose hash is kept here. It runs approved commands for the agent's jobs on that machine.
+ */
+export const runners = pgTable(
+  'runners',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => players.id),
+    /** SHA-256 of the runner's token (the token itself is shown once, to the runner). */
+    tokenHash: text('token_hash'),
+    /** SHA-256 of the one-time pairing code, until it is used or expires. */
+    codeHash: text('code_hash'),
+    codeExpiresAt: timestamp('code_expires_at', { withTimezone: true }),
+    /** What the runner said it runs on (platform, whether Docker is there), for the owner's page. */
+    machine: text('machine'),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('runners_agent_uq').on(t.agentId),
+    uniqueIndex('runners_token_uq').on(t.tokenHash),
+  ],
+);
+
+/**
+ * A command the agent asked to run on its owner's computer (one per loop step), and what came back.
+ * `pending` until the runner collects it, `sent` while the owner decides and it runs, then `done`,
+ * `denied` (the owner said no) or `expired` (nobody answered in time).
+ */
+export const runnerTasks = pgTable(
+  'runner_tasks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    jobId: uuid('job_id').notNull(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    n: integer('n').notNull(),
+    command: text('command').notNull(),
+    status: text('status').notNull(),
+    exitCode: integer('exit_code'),
+    output: text('output'),
+    createdAt: createdAt(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('runner_tasks_step_uq').on(t.jobId, t.n),
+    index('runner_tasks_agent_ix').on(t.agentId, t.status),
   ],
 );
