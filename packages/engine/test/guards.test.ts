@@ -113,6 +113,7 @@ describe('guards on what costs the game NEAR', () => {
     ).rejects.toMatchObject({ code: 'rate_limited' });
     await ensurePlayerAccount(w.engine, await walletPlayer('real-player.testnet'));
     expect(walletParent('a1.farm.testnet')).toBe('farm.testnet');
+    expect(walletParent('x.a1.farm.testnet')).toBe('farm.testnet');
     expect(walletParent('alice.testnet')).toBeNull();
     expect(walletParent('b'.repeat(64))).toBeNull();
   });

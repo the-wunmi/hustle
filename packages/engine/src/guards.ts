@@ -40,11 +40,16 @@ export async function takeDailySlot(
  */
 export const ACCOUNTS_PER_PARENT_PER_DAY = 3;
 
-/** The parent of a named sub-account under a `.testnet` name, or null. */
+/**
+ * The top-level `.testnet` name a sub-account sits under (`farm.testnet` for `x.a1.farm.testnet`),
+ * or null for top-level and implicit accounts. Keyed on the top-level name, not the direct parent,
+ * so nesting deeper can't mint fresh buckets.
+ */
 export function walletParent(accountId: string): string | null {
   if (/^[0-9a-f]{64}$/.test(accountId)) return null;
-  const parent = accountId.slice(accountId.indexOf('.') + 1);
-  return parent === 'testnet' || !parent.endsWith('.testnet') ? null : parent;
+  const labels = accountId.split('.');
+  if (labels.length < 3 || labels.at(-1) !== 'testnet') return null;
+  return labels.slice(-2).join('.');
 }
 
 let reserveLogged = false;

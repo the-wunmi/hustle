@@ -717,7 +717,8 @@ export class NearChain implements ChainGateway {
     // Players: at most `refillCapPerDay / accountRefill` refills per UTC day, each keyed by signer,
     // day and number so the count lives in the tx log and survives restarts. Past it the signer
     // waits for tomorrow, so a player looping owner actions can't drain the root.
-    const top = floor + this.funding.accountRefill - amount;
+    // Each refill is clamped to `accountRefill`, so `most` refills can never send more than the cap.
+    const top = minBig(floor + this.funding.accountRefill - amount, this.funding.accountRefill);
     const cap = this.opts.refillCapPerDay ?? 10n ** 23n;
     const most = Number(cap / this.funding.accountRefill);
     const day = new Date().toISOString().slice(0, 10);
@@ -1869,3 +1870,4 @@ export function isPlayerAccount(accountId: string): boolean {
 }
 
 const maxBig = (a: bigint, b: bigint) => (a > b ? a : b);
+const minBig = (a: bigint, b: bigint) => (a < b ? a : b);
