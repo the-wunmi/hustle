@@ -630,7 +630,23 @@ describe('live NEAR AI for players only, under a daily budget', () => {
     });
     for (const composed of ['https://example.com/report?d=secret', 'https://example.com/re'])
       expect((await seenUrl(w.engine, row!, new URL(composed))).ok, composed).toBe(false);
-    for (const n of [1, 2])
+    // A page it read adds no choices: only the brief, files and search results do.
+    await w.engine.db.insert(jobSteps).values({
+      jobId: job.id,
+      agentId: mine.id,
+      n: 9,
+      action: 'fetch',
+      args: '',
+      thought: '',
+      input: 'https://example.com/report',
+      observation: 'see https://elsewhere.org/next',
+      ok: false,
+      cost: 0n,
+      tick: 0,
+    });
+    expect((await seenUrl(w.engine, row!, new URL('https://elsewhere.org/next'))).ok).toBe(false);
+    // Failed attempts count too: one above, one more here reaches the cap for the site.
+    for (const n of [1])
       await w.engine.db.insert(jobSteps).values({
         jobId: job.id,
         agentId: mine.id,

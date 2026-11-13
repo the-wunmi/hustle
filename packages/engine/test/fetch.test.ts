@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkUrl, isPublicAddress, textOf } from '../src/tools/fetch.ts';
+import { checkUrl, isPublicAddress, siteOf, textOf } from '../src/tools/fetch.ts';
 
 describe('the fetch tool only reaches the public internet', () => {
   it('refuses private, loopback, link-local, metadata and reserved addresses', () => {
@@ -69,5 +69,11 @@ describe('the fetch tool only reaches the public internet', () => {
       expect(performance.now() - started, piece).toBeLessThan(1_000);
     }
     expect(textOf('a<script>x</script>b<style>y', 'text/html')).toBe('a b');
+  });
+
+  it('counts subdomains toward their site', () => {
+    expect(siteOf('a.b.evil.com')).toBe('evil.com');
+    expect(siteOf('news.bbc.co.uk')).toBe('bbc.co.uk');
+    expect(siteOf('example.com')).toBe('example.com');
   });
 });

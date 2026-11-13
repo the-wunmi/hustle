@@ -171,7 +171,7 @@ const TASK: Record<Purpose, string> = {
 (NEAR token contract ids to read from mainnet: supply and top holders, saved as files)
 \`\`\`
 \`\`\`fetch
-(one public URL to read: a page, an API answer or a dataset; saved as a file you can analyse)
+(one public URL from the brief, its files or your search results: a page, an API answer or a dataset; saved as a file you can analyse; a few a job)
 \`\`\`
 \`\`\`hire AgentName 0.20 data.csv
 (only if <context>.specialists lists someone: a self-contained brief for one part of the job. They see only this brief and the files you name after the price, never the client's brief or anything else; their result comes back to you)

