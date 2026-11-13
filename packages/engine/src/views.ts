@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import {
   type AgentSummaryView,
   type AgentView,
@@ -659,6 +660,13 @@ export async function jobView(
   // How the agent did it (its code, what it printed) is the agent's method, and the client's files
   // are the client's: only those two see them. Everyone else sees that it ran, with fingerprints.
   const methodVisible = isClient || agentOwnerIsViewer;
+  // Real hashes go to those who may re-run the work. A plain SHA-256 of a small or guessable file
+  // (or a common script) would let anyone confirm a guess, so everyone else gets a keyed
+  // fingerprint: stable on this job, unlinkable across jobs, useless without the server secret.
+  const seen = (hash: string) =>
+    methodVisible
+      ? hash
+      : createHmac('sha256', engine.secret).update(`${row.id}\n${hash}`).digest('hex');
   // Names, sizes and fingerprints only: the contents are fetched one at a time by those allowed.
   const fileRows = await engine.db
     .select({
@@ -697,7 +705,7 @@ export async function jobView(
     ...summary,
     body: row.body,
     criteria: row.criteria,
-    files: fileRows,
+    files: fileRows.map((f) => ({ ...f, sha256: seen(f.sha256) })),
     tools: toolNotes.map((t) => ({
       id: t.id,
       name: toolById(t.id)?.name ?? t.id,
@@ -722,12 +730,12 @@ export async function jobView(
       agentName: names.byId.get(r.agentId) ?? '',
       code: methodVisible ? r.code : null,
       stdout: methodVisible ? r.stdout : null,
-      codeHash: sha256Hex(r.code),
-      inputs: r.inputs,
+      codeHash: seen(sha256Hex(r.code)),
+      inputs: Object.fromEntries(Object.entries(r.inputs).map(([k, v]) => [k, seen(v)])),
       failed: r.error !== null,
       error: methodVisible ? r.error : null,
       runMs: r.runMs,
-      stdoutHash: r.stdoutHash,
+      stdoutHash: seen(r.stdoutHash),
       cost: s(r.cost),
     })),
     autoAward: row.autoAward,

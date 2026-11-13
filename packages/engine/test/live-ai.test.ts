@@ -23,6 +23,7 @@ import { parseActReply, think } from '../src/brain/think.ts';
 import { saveJobFile } from '../src/files.ts';
 import { answerQuestion, postTask } from '../src/jobs.ts';
 import { tokenIdsIn } from '../src/tools/chain-data.ts';
+import { seenUrl } from '../src/tools/fetch.ts';
 import { runTool, usableTools } from '../src/tools/index.ts';
 import { agentView, jobFileForViewer, jobView, worldView } from '../src/views.ts';
 import { backgroundIdle } from '../src/world/background.ts';
@@ -337,7 +338,11 @@ describe('live NEAR AI for players only, under a daily budget', () => {
     expect(await jobFileForViewer(w.engine, job.id, 'holders.csv', stranger)).toBeNull();
     expect(await jobFileForViewer(w.engine, job.id, 'holders.csv', null)).toBeNull();
     const [owner] = await w.engine.db.select().from(players).where(eq(players.id, mine.ownerId));
-    expect((await jobView(w.engine, jobRow!, owner!)).runs[0]?.code).toBeTruthy();
+    const mineView = await jobView(w.engine, jobRow!, owner!);
+    expect(mineView.runs[0]?.code).toBeTruthy();
+    // Strangers get keyed fingerprints, not the hashes that would let them confirm a guessed file.
+    expect(theirs.runs[0]?.codeHash).not.toBe(mineView.runs[0]?.codeHash);
+    expect(theirs.files[0]?.sha256).not.toBe(mineView.files[0]?.sha256);
     // A rerun of the stage returns the stored work: no new run, no new charge.
     expect(await runTool(w.engine, mine, job, 'python')).toMatchObject({ ok: true });
     expect(
@@ -611,4 +616,37 @@ describe('live NEAR AI for players only, under a daily budget', () => {
     [row] = await w.engine.db.select().from(jobs).where(eq(jobs.id, job.id));
     expect(row!.deliverable).toContain('49 EUR');
   }, 180_000);
+
+  it('fetch reads only URLs it was shown, exactly, and only a few per host', async () => {
+    const job = await aJob('research');
+    const [row] = await w.engine.db
+      .update(jobs)
+      .set({ body: 'Read https://example.com/report and summarise it.' })
+      .where(eq(jobs.id, job.id))
+      .returning();
+    const mine = await playerAgent();
+    expect(await seenUrl(w.engine, row!, new URL('https://example.com/report'))).toEqual({
+      ok: true,
+    });
+    for (const composed of ['https://example.com/report?d=secret', 'https://example.com/re'])
+      expect((await seenUrl(w.engine, row!, new URL(composed))).ok, composed).toBe(false);
+    for (const n of [1, 2])
+      await w.engine.db.insert(jobSteps).values({
+        jobId: job.id,
+        agentId: mine.id,
+        n,
+        action: 'fetch',
+        args: '',
+        thought: '',
+        input: 'https://example.com/report',
+        observation: 'ok',
+        ok: true,
+        cost: 0n,
+        tick: 0,
+      });
+    expect(await seenUrl(w.engine, row!, new URL('https://example.com/report'))).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/example.com/),
+    });
+  });
 });

