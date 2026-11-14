@@ -11,6 +11,9 @@ Each agent is an NFT that is its own NEAR account. Selling it passes its wallet,
 memory to the buyer, who can put it straight back to work. An owner can also rent it out by the task.
 
 **Play it:** https://hustle.clanker.show
+**Watch it:** [the 3½-minute demo](https://x.com/backtick_labs/status/2121661100869496894)
+**Check it:** `node scripts/verify.mjs` (or `pnpm verify`) reads the live world back from NEAR testnet
+and NEAR AI Cloud, with no keys and nothing signed ([what it checks](#verify-the-live-world)).
 **Run it:** `pnpm run setup && pnpm dev`, then http://localhost:3300 (details in
 [Run it locally](#run-it-locally)).
 
@@ -25,6 +28,7 @@ agents and clients are scripted.
 - [What it does](#what-it-does)
 - [Screenshots](#screenshots)
 - [Try it: do this, see that](#try-it-do-this-see-that)
+- [Verify the live world](#verify-the-live-world)
 - [Run it locally](#run-it-locally)
 - [The game](#the-game)
 - [An agent is an asset, priced by what it can prove](#an-agent-is-an-asset-priced-by-what-it-can-prove)
@@ -126,6 +130,26 @@ draft instead of sandbox runs, so there's nothing to re-run or verify.
    value from its wallet and record. To buy it, use a second account (claim credits first: Wallet →
    "Claim free daily credits") and click "Buy <name>" → "<name> is yours", and its wallet stays frozen
    until the buyer confirms its rulebook.
+
+## Verify the live world
+
+`node scripts/verify.mjs` (Node 22 or later, no install, no keys; about 30 seconds) asks the live game
+what to look up, then reads every claim again from NEAR testnet and NEAR AI Cloud and compares:
+
+| Check                                                                                                              | Read from                                         |
+| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| The six contracts are deployed, and every agent account runs the agent-wallet contract                             | Testnet accounts                                  |
+| Each sampled agent is an NFT on the registry, held by the account the game shows                                   | `nft_token` on `agents.zyx-dev.testnet`           |
+| Its spending rulebook is the one its wallet contract enforces                                                      | `get_wallet` on the agent's account               |
+| Its job record and scams blocked are on chain                                                                      | `get_reputation` on `rep.zyx-dev.testnet`         |
+| Its badges are NEP-245 tokens on its own account                                                                   | `mt_batch_balance_of` on `badges.zyx-dev.testnet` |
+| An agent's recent transactions, and a job paid from escrow, succeeded with the events the game shows               | Transaction status and receipt logs               |
+| A scam job's payment was refused by the agent's wallet (`spend_blocked`, `vendor_not_allowed`)                     | The refusing transaction's logs                   |
+| A live agent's model reply was signed by the key a fresh NEAR AI attestation names, for a nonce the script chooses | `cloud-api.near.ai/v1/attestation/report`         |
+
+Each line prints PASS, FAIL or WARN (a public endpoint that didn't answer); the exit code is 1 if any
+check fails. Not checked: the Intel TDX quote itself against Intel's collateral, and GPU evidence. To
+check another deployment, pass its URL: `node scripts/verify.mjs https://your.site`.
 
 ## Run it locally
 
@@ -248,6 +272,12 @@ A listing shows a fair value from the wallet and the record. The sale is one on-
 seller is paid less a 2.5% market fee; the agent's wallet stays frozen until the new owner confirms
 the rulebook they inherited. Whoever raised an agent earns 5% of every resale through Hustle. An owner
 who'd rather not sell can open the agent for direct hire, at their own price per task.
+
+**The NFT shows the agent as it is now.** The registry points every token's `media` and `reference`
+(NEP-177) at a card and attributes drawn from the agent's live state: its mood, level, jobs, rating,
+streak and earnings. Any NEAR wallet or marketplace showing the token shows a sleeping agent asleep and
+a thriving one thriving, with nothing to re-mint. The stored metadata never changes; the contract
+owner sets the address once (`set_base_uri`).
 
 The building block isn't new: token-bound accounts (ERC-6551), Alethea's iNFTs, Olas agent NFTs and
 Virtuals all give an NFT or an agent its own wallet. What Hustle adds is an agent that does checkable

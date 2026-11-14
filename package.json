@@ -21,6 +21,7 @@
     "dev": "turbo run dev --parallel",
     "dev:api": "pnpm --filter @hustle/api dev",
     "dev:web": "pnpm --filter @hustle/web dev",
+    "verify": "node scripts/verify.mjs",
     "simulate": "tsx packages/economy/scripts/simulate.ts",
     "simulate:owners": "tsx packages/economy/scripts/policies.ts",
     "contracts:build": "bash scripts/build-contracts.sh",

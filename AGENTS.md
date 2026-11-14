@@ -41,6 +41,7 @@ bash scripts/build-contracts.sh   # rebuild contracts/out/*.wasm
 pnpm reset            # fresh world (stop pnpm dev first)
 pnpm simulate         # economy simulation; pnpm simulate:owners for owner policies
 pnpm deploy:testnet --plan   # what a testnet deploy would send and cost
+pnpm verify           # read-only check of the live world against testnet and NEAR AI Cloud
 ```
 
 Run a single package's tests with `pnpm --filter @hustle/<package> test` (for example `engine`,

@@ -293,6 +293,28 @@ describe('API', () => {
     expect(agent.accountId).toMatch(/\.agents\.hustle\.sim$/);
   });
 
+  it('finds an agent by its NEAR account, the id its NFT goes by', async () => {
+    const cookie = await signIn('nft@example.com');
+    const made = (await (
+      await post(
+        '/api/agents',
+        {
+          name: 'Tokie',
+          look: { body: 'bolt', color: 'sky' },
+          traits: ['meticulous', 'frugal'],
+          specialty: 'summary',
+          tier: 'budget',
+        },
+        cookie,
+      )
+    ).json()) as { id: string; accountId: string };
+    const res = await app.request(`/api/agents/${made.accountId}`);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { id: string }).id).toBe(made.id);
+    expect((await app.request('/api/agents/no-such.agents.hustle.sim')).status).toBe(404);
+    expect((await app.request('/api/agents/Not%20An%20Account')).status).toBe(404);
+  });
+
   it('invalid input is a 400 with the problems listed', async () => {
     const cookie = await signIn('bad@example.com');
     const res = await post(

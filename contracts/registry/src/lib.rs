@@ -85,6 +85,12 @@ const GAS_FOR_OWNER_PAYMENT: Gas = Gas::from_tgas(60);
 
 const ITEM_SPEC: &str = "sharded-item-1.0.0";
 
+/// Where each token's live card and attributes are served (NEP-177 `base_uri`), set by the owner.
+/// Kept under its own storage key, outside the root state, so setting it needs no state migration.
+const BASE_URI_KEY: &[u8] = b"base_uri";
+/// Longest base URI accepted.
+const MAX_BASE_URI_LEN: usize = 200;
+
 #[derive(BorshStorageKey)]
 #[near]
 enum StorageKey {
@@ -208,6 +214,32 @@ impl Registry {
             rotation_seq: LookupMap::new(StorageKey::RotationSeq),
             transfers_in_flight: LookupMap::new(StorageKey::TransfersInFlight),
         }
+    }
+
+    /// Owner only. Points every token's `media` and `reference` at `<base_uri>/<token_id>.svg` and
+    /// `.json`, a card and attributes drawn from the agent's live state, so a wallet or marketplace
+    /// shows the agent as it is now. `None` turns it off. The few bytes it stores come from this
+    /// contract's balance.
+    pub fn set_base_uri(&mut self, base_uri: Option<String>) {
+        require!(env::predecessor_account_id() == self.owner_id, "not_owner");
+        match base_uri {
+            Some(uri) => {
+                let uri = uri.trim_end_matches('/');
+                require!(
+                    uri.starts_with("https://") || uri.starts_with("http://"),
+                    "invalid_base_uri"
+                );
+                require!(uri.len() <= MAX_BASE_URI_LEN, "invalid_base_uri");
+                env::storage_write(BASE_URI_KEY, uri.as_bytes());
+            }
+            None => {
+                env::storage_remove(BASE_URI_KEY);
+            }
+        }
+    }
+
+    pub fn get_base_uri(&self) -> Option<String> {
+        base_uri()
     }
 
     /// Owner only, no deposit. The call input is the raw agent-wallet wasm (not JSON).
@@ -586,7 +618,7 @@ impl NonFungibleTokenCore for Registry {
     }
 
     fn nft_token(&self, token_id: TokenId) -> Option<Token> {
-        self.tokens.nft_token(token_id)
+        self.tokens.nft_token(token_id).map(with_live_media)
     }
 }
 
@@ -677,7 +709,8 @@ impl NonFungibleTokenEnumeration for Registry {
     }
 
     fn nft_tokens(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
-        self.tokens.nft_tokens(from_index, limit)
+        let tokens = self.tokens.nft_tokens(from_index, limit);
+        tokens.into_iter().map(with_live_media).collect()
     }
 
     fn nft_supply_for_owner(&self, account_id: AccountId) -> U128 {
@@ -692,6 +725,9 @@ impl NonFungibleTokenEnumeration for Registry {
     ) -> Vec<Token> {
         self.tokens
             .nft_tokens_for_owner(account_id, from_index, limit)
+            .into_iter()
+            .map(with_live_media)
+            .collect()
     }
 }
 
@@ -703,7 +739,7 @@ impl NonFungibleTokenMetadataProvider for Registry {
             name: "Hustle Agents".to_string(),
             symbol: "AGENT".to_string(),
             icon: None,
-            base_uri: None,
+            base_uri: base_uri(),
             reference: None,
             reference_hash: None,
         }
@@ -798,6 +834,23 @@ fn refund(account_id: &AccountId, amount: NearToken) {
     if !amount.is_zero() {
         Promise::new(account_id.clone()).transfer(amount).detach();
     }
+}
+
+fn base_uri() -> Option<String> {
+    env::storage_read(BASE_URI_KEY).and_then(|b| String::from_utf8(b).ok())
+}
+
+/// A token as views return it: with a base URI set, its `media` and `reference` point at the live
+/// card and attributes, as absolute URLs so no wallet has to resolve them against `base_uri`. They
+/// change as the agent does, so they carry no hash. The stored metadata is never changed.
+fn with_live_media(mut token: Token) -> Token {
+    if let (Some(base), Some(metadata)) = (base_uri(), token.metadata.as_mut()) {
+        metadata.media = Some(format!("{base}/{}.svg", token.token_id));
+        metadata.media_hash = None;
+        metadata.reference = Some(format!("{base}/{}.json", token.token_id));
+        metadata.reference_hash = None;
+    }
+    token
 }
 
 fn empty_metadata() -> TokenMetadata {

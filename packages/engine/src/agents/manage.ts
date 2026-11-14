@@ -108,10 +108,15 @@ export async function ownedAgent(
   return row;
 }
 
+/** An agent by its id, or by its NEAR account (which is also its NFT token id). */
 export async function anyAgent(engine: Engine, agentId: string): Promise<AgentRow> {
   const parsed = z.uuid().safeParse(agentId);
-  if (!parsed.success) throw new DomainError('not_found', 'Agent not found');
-  const [row] = await engine.db.select().from(agents).where(eq(agents.id, parsed.data));
+  const byAccount = !parsed.success && /^[a-z0-9._-]{2,64}$/.test(agentId);
+  if (!parsed.success && !byAccount) throw new DomainError('not_found', 'Agent not found');
+  const [row] = await engine.db
+    .select()
+    .from(agents)
+    .where(parsed.success ? eq(agents.id, parsed.data) : eq(agents.accountId, agentId));
   if (!row?.accountId) throw new DomainError('not_found', 'Agent not found');
   return row;
 }
