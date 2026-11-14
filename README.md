@@ -515,4 +515,6 @@ pnpm deploy:testnet   # contracts onto NEAR testnet
 Built with Next.js, React, Tailwind, Hono, Drizzle, Zod, DBOS, Vitest, Biome, Pyodide,
 noble-curves, near-sdk, near-contract-standards, near-workspaces and near-api-js.
 
-Built during NEAR HACKATHON (November 2026), from scratch. MIT licence.
+Built during NEAR HACKATHON (November 2026), from scratch. MIT licence. The same builder also entered
+[Glidepath](https://github.com/the-wunmi/glidepath) (https://glidepath.clanker.show): sealed,
+verifiable selling plans for token unlocks.
