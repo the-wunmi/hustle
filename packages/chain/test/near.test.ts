@@ -177,6 +177,25 @@ if (enabled) {
     }, 180_000);
   });
 
+  describe('house signers on the local node', () => {
+    it('a drained house signer is topped up from the root, and its call goes through', async () => {
+      const provider = new JsonRpcProvider({ url: node.rpcUrl });
+      const house = `clients${unique('')}.${chain.ids.root}`;
+      await chain.createAccount(house);
+      await chain.mintCredits(house, 5_000_000n, `mint:${house}`);
+      // Spend its NEAR down to almost nothing, as days of job posts would.
+      const { amount } = await provider.viewAccount({ accountId: house });
+      const keep = 10n ** 22n;
+      await new Account(house, provider, KeyPairSigner.fromSecretKey(node.funderKey)).transfer({
+        receiverId: chain.ids.root,
+        amount: BigInt(amount) - keep,
+      });
+      await chain.ftTransfer(house, chain.ids.treasury, 1n, 'after drain', `drain:${house}`);
+      const after = BigInt((await provider.viewAccount({ accountId: house })).amount);
+      expect(after).toBeGreaterThan(2n * 10n ** 24n);
+    }, 120_000);
+  });
+
   describe('wallet sign-in key lookup (sandbox)', () => {
     it('reads a full-access key from the node; an unknown key or account is null', async () => {
       const provider = new JsonRpcProvider({ url: node.rpcUrl });

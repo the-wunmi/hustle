@@ -112,8 +112,10 @@ const FUNDING: Record<NearNetwork, Funding> = {
     account: 10n * NEAR,
     accountLow: 0n,
     accountRefill: 0n,
-    houseLow: 0n,
-    houseTarget: 0n,
+    // The game's own signers spend gas all day: a local world left running for days used to drain
+    // `clients` and stall every job post. The root has plenty here, so they're kept topped up.
+    houseLow: 2n * NEAR,
+    houseTarget: 10n * NEAR,
     payee: 10n * NEAR,
     parentHeadroom: NEAR,
     parentRefill: 10n * NEAR,
@@ -684,7 +686,7 @@ export class NearChain implements ChainGateway {
    * accounts that actually play.
    */
   private async refillSigner(signerId: string): Promise<void> {
-    if (this.funding.accountLow === 0n) return;
+    if (this.funding.accountLow === 0n && this.funding.houseLow === 0n) return;
     if (signerId === this.ids.root || signerId === this.funderId || signerId === this.ids.operator)
       return;
     if (!signerId.endsWith(`.${this.ids.root}`)) return;
@@ -713,6 +715,7 @@ export class NearChain implements ChainGateway {
       });
       return;
     }
+    if (this.funding.accountLow === 0n) return;
     const floor = maxBig(this.funding.accountLow, oneCall);
     if (amount >= floor) return;
     // Players: at most `refillCapPerDay / accountRefill` refills per UTC day, each keyed by signer,
