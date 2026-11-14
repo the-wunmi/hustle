@@ -196,6 +196,30 @@ if (enabled) {
     }, 120_000);
   });
 
+  describe('the operator on the local node', () => {
+    it('a drained operator is topped up from the root, and its call goes through', async () => {
+      const provider = new JsonRpcProvider({ url: node.rpcUrl });
+      const op = chain.ids.operator;
+      // The operator holds no credits in the game; register it so it can sign one transfer.
+      await new Account(op, provider, KeyPairSigner.fromSecretKey(node.funderKey)).callFunction({
+        contractId: chain.ids.credits,
+        methodName: 'storage_deposit',
+        args: { account_id: op, registration_only: true },
+        deposit: 10n ** 22n,
+      });
+      await chain.mintCredits(op, 10n, `opmint:${unique('')}`);
+      const { amount } = await provider.viewAccount({ accountId: op });
+      const keep = 10n ** 22n;
+      await new Account(op, provider, KeyPairSigner.fromSecretKey(node.funderKey)).transfer({
+        receiverId: chain.ids.root,
+        amount: BigInt(amount) - keep,
+      });
+      await chain.ftTransfer(op, chain.ids.treasury, 1n, 'after drain', `opdrain:${unique('')}`);
+      const after = BigInt((await provider.viewAccount({ accountId: op })).amount);
+      expect(after).toBeGreaterThan(100n * 10n ** 24n);
+    }, 120_000);
+  });
+
   describe('wallet sign-in key lookup (sandbox)', () => {
     it('reads a full-access key from the node; an unknown key or account is null', async () => {
       const provider = new JsonRpcProvider({ url: node.rpcUrl });

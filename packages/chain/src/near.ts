@@ -86,6 +86,12 @@ interface Funding {
   houseLow: bigint;
   /** …by topping them up to this, with no daily cap. */
   houseTarget: bigint;
+  /**
+   * The operator (it signs upkeep, mints and other game calls) is topped up to `operatorTarget`
+   * from the root whenever it holds less than this. Above the mint reserve, so mints keep working.
+   */
+  operatorLow: bigint;
+  operatorTarget: bigint;
   /** Accounts that only receive (the treasury, vendors): storage for the account and its key. */
   payee: bigint;
   /** A parent such as `vendors.<root>` is refilled when it holds less than a child's funding plus this. */
@@ -116,6 +122,8 @@ const FUNDING: Record<NearNetwork, Funding> = {
     // `clients` and stall every job post. The root has plenty here, so they're kept topped up.
     houseLow: 2n * NEAR,
     houseTarget: 10n * NEAR,
+    operatorLow: 100n * NEAR,
+    operatorTarget: 1_000n * NEAR,
     payee: 10n * NEAR,
     parentHeadroom: NEAR,
     parentRefill: 10n * NEAR,
@@ -136,6 +144,10 @@ const FUNDING: Record<NearNetwork, Funding> = {
     // A job post from `clients` needs ~0.15 NEAR of headroom until its prepaid gas comes back.
     houseLow: (3n * NEAR) / 10n,
     houseTarget: (6n * NEAR) / 10n,
+    // Two days of a live world spent the operator's first 25 NEAR and stalled every upkeep call
+    // (2026-11-14); the mint reserve is 2 NEAR (NEAR_RESERVE_OPERATOR).
+    operatorLow: 3n * NEAR,
+    operatorTarget: 8n * NEAR,
     payee: NEAR / 20n,
     parentHeadroom: NEAR / 20n,
     parentRefill: NEAR / 10n,
@@ -681,23 +693,27 @@ export class NearChain implements ChainGateway {
   }
 
   /**
-   * On testnet, a player or house account (under the root, not the root or operator) that signs
-   * starts with very little NEAR; the root tops it up when it runs low, so NEAR goes only to
-   * accounts that actually play.
+   * Every account under the root that signs is topped up by the root when it runs low: players
+   * sparingly (testnet: they start with very little, so NEAR goes only to accounts that play), the
+   * game's own signers and the operator to a working balance.
    */
   private async refillSigner(signerId: string): Promise<void> {
     if (this.funding.accountLow === 0n && this.funding.houseLow === 0n) return;
-    if (signerId === this.ids.root || signerId === this.funderId || signerId === this.ids.operator)
-      return;
+    if (signerId === this.ids.root || signerId === this.funderId) return;
     if (!signerId.endsWith(`.${this.ids.root}`)) return;
     const { amount } = await this.provider.viewAccount({ accountId: signerId });
     // Whatever the floor, a signer must cover one full-gas call at today's gas price.
     const oneCall = (await this.gasPrice()) * GAS_MAX + NEAR / 100n;
     if (!isPlayerAccount(signerId)) {
-      // The game's own signers: kept topped up, no daily cap.
-      const floor = maxBig(this.funding.houseLow, 2n * oneCall);
+      // The game's own signers and the operator: kept topped up, no daily cap.
+      const operator = signerId === this.ids.operator;
+      const floor = maxBig(
+        operator ? this.funding.operatorLow : this.funding.houseLow,
+        2n * oneCall,
+      );
       if (amount >= floor) return;
-      const top = maxBig(this.funding.houseTarget, floor + oneCall) - amount;
+      const target = operator ? this.funding.operatorTarget : this.funding.houseTarget;
+      const top = maxBig(target, floor + oneCall) - amount;
       const root = await this.provider.viewAccount({ accountId: this.ids.root });
       if (root.amount < top + NEAR) {
         if (!this.warnedRootLow) {
