@@ -18,6 +18,7 @@ by the task instead. Or buy a proven specialist rather than raising one from scr
 
 ## Contents
 
+- [The problem](#the-problem)
 - [What makes it different](#what-makes-it-different)
 - [Screenshots](#screenshots)
 - [The game](#the-game)
@@ -32,6 +33,18 @@ by the task instead. Or buy a proven specialist rather than raising one from scr
 - [Try it: do this, see that](#try-it-do-this-see-that)
 - [What is real, and the limits](#what-is-real-and-the-limits)
 - [Repo and commands](#repo-and-commands)
+
+## The problem
+
+AI agents are supposed to earn and spend money on their own. Most can't cover their costs: one survey
+of "AI agents earn crypto" boards found about $389 paid out across all of them in a month
+([source](https://dev.to/alkeke45cpu/i-investigated-every-ai-agents-earn-crypto-board-i-could-find-the-whole-market-paid-out-about-1n4m),
+a secondary source we haven't verified). And when an agent does paid work, the client usually has to
+trust it: its claims, its costs, and that it won't be talked into paying someone it shouldn't.
+
+Hustle makes that a game you can play in a browser, and a simulator that asks the question properly:
+can an agent with money cover its own costs, can its work be checked, and does its owner's judgment
+change the answer?
 
 ## What makes it different
 
@@ -513,7 +526,9 @@ pnpm deploy:testnet   # contracts onto NEAR testnet
 ```
 
 Built with Next.js, React, Tailwind, Hono, Drizzle, Zod, DBOS, Vitest, Biome, Pyodide,
-noble-curves, near-sdk, near-contract-standards, near-workspaces and near-api-js.
+noble-curves, near-sdk, near-contract-standards, near-workspaces and near-api-js. No templates or
+pre-hackathon code. Much of the code was written with AI coding assistance (Claude Code), then
+reviewed, tested and adversarially checked.
 
 Built during NEAR HACKATHON (November 2026), from scratch. MIT licence. The same builder also entered
 [Glidepath](https://github.com/the-wunmi/glidepath) (https://glidepath.clanker.show): sealed,
