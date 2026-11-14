@@ -3,7 +3,6 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mintAgent, setFrozen, updateRulebook } from '../src/agents/manage.ts';
 import { createEngine, redactUrls } from '../src/context.ts';
-import { walletParent } from '../src/guards.ts';
 import { ensurePlayerAccount } from '../src/players.ts';
 import { type World, world } from './harness.ts';
 
@@ -21,7 +20,6 @@ describe('guards on what costs the game NEAR', () => {
   let short: string | null = null;
   beforeAll(async () => {
     w = await world('guards', {
-      dailyCaps: { accounts: 2, mints: 2 },
       reserveCheck: async () => short,
     });
   }, 60_000);
@@ -37,37 +35,29 @@ describe('guards on what costs the game NEAR', () => {
     ).rejects.toThrow(/CHAIN_MODE=testnet is the live world/);
   });
 
-  it('new accounts and agent mints stop at the day’s cap, with a plain message', async () => {
-    const a = await w.signIn('cap-a@example.com', 'Capa');
-    const b = await w.signIn('cap-b@example.com', 'Capb');
-    const c = await w.signIn('cap-c@example.com', 'Capc');
-    const readyA = await ensurePlayerAccount(w.engine, a);
-    await ensurePlayerAccount(w.engine, b);
-    await expect(ensurePlayerAccount(w.engine, c)).rejects.toMatchObject({
-      code: 'rate_limited',
-      message: 'The game is full for today; try again tomorrow.',
-    });
-    // A ready account takes no slot.
-    await ensurePlayerAccount(w.engine, readyA);
-    await mintAgent(w.engine, readyA, agentInput('Capone'));
-    await mintAgent(w.engine, readyA, agentInput('Captwo'));
-    await expect(mintAgent(w.engine, readyA, agentInput('Capthree'))).rejects.toMatchObject({
-      code: 'rate_limited',
-    });
-  });
-
   it('below the NEAR reserve, no new accounts or agents', async () => {
+    const ready = await ensurePlayerAccount(
+      w.engine,
+      await w.signIn('reserve-ready@example.com', 'Ready'),
+    );
     short = 'orchestrator.hustle.sim';
     try {
       const d = await w.signIn('reserve@example.com', 'Reservo');
       await expect(ensurePlayerAccount(w.engine, d)).rejects.toMatchObject({ code: 'unavailable' });
+      await expect(mintAgent(w.engine, ready, agentInput('Reserved'))).rejects.toMatchObject({
+        code: 'unavailable',
+      });
     } finally {
       short = null;
     }
+    // With NEAR back above the reserve, both go through.
+    await mintAgent(w.engine, ready, agentInput('Unreserved'));
   });
 
   it('a freeze or rulebook that changes nothing sends no transaction', async () => {
-    const owner = (await w.engine.db.select().from(agents).where(eq(agents.name, 'Capone')))[0]!;
+    const owner = (
+      await w.engine.db.select().from(agents).where(eq(agents.name, 'Unreserved'))
+    )[0]!;
     const [player] = await w.engine.db.select().from(players).where(eq(players.id, owner.ownerId));
     let sent = 0;
     const chain = w.engine.chain as unknown as Record<string, (...a: unknown[]) => unknown>;
@@ -101,30 +91,5 @@ describe('guards on what costs the game NEAR', () => {
     expect(redactUrls('{"error":"fetch https://rpc.example/v1?apiKey=SECRET failed"}')).toBe(
       '{"error":"fetch https://rpc.example/v1?[redacted] failed"}',
     );
-  });
-
-  const walletPlayer = async (account: string) => {
-    const p = await w.signIn(`${account}@example.com`, account.slice(0, 20).replace(/\./g, ' '));
-    const [row] = await w.engine.db
-      .update(players)
-      .set({ walletAccountId: account })
-      .where(eq(players.id, p.id))
-      .returning();
-    return row!;
-  };
-
-  it('stops a fourth sub-account of one parent today; other wallets still get in', async () => {
-    // A roomy global cap, so only the per-parent limit is in play.
-    w.engine.dailyCaps = { accounts: 100, mints: 100 };
-    for (const n of [1, 2, 3])
-      await ensurePlayerAccount(w.engine, await walletPlayer(`a${n}.farm.testnet`));
-    await expect(
-      ensurePlayerAccount(w.engine, await walletPlayer('a4.farm.testnet')),
-    ).rejects.toMatchObject({ code: 'rate_limited' });
-    await ensurePlayerAccount(w.engine, await walletPlayer('real-player.testnet'));
-    expect(walletParent('a1.farm.testnet')).toBe('farm.testnet');
-    expect(walletParent('x.a1.farm.testnet')).toBe('farm.testnet');
-    expect(walletParent('alice.testnet')).toBeNull();
-    expect(walletParent('b'.repeat(64))).toBeNull();
   });
 });

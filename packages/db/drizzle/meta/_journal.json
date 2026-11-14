@@ -134,6 +134,13 @@
       "when": 1794595141757,
       "tag": "0018_runners",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794659099897,
+      "tag": "0019_remove_daily_limits",
+      "breakpoints": true
     }
   ]
 }

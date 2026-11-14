@@ -7,7 +7,6 @@ import {
   jobSteps,
   jobs,
   ledger,
-  nearaiBudget,
   players,
   runnerTasks,
   sandboxRuns,
@@ -18,10 +17,8 @@ import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mintAgent } from '../src/agents/manage.ts';
 import { loadAgent } from '../src/agents/state.ts';
-import { liveAiBudget, usdToNano, utcDay } from '../src/brain/budget.ts';
 import { scriptedResponse } from '../src/brain/scripted.ts';
 import { parseActReply, think } from '../src/brain/think.ts';
-import { toolsFor } from '../src/context.ts';
 import { saveJobFile } from '../src/files.ts';
 import { answerQuestion, postTask } from '../src/jobs.ts';
 import {
@@ -35,7 +32,7 @@ import {
 import { tokenIdsIn } from '../src/tools/chain-data.ts';
 import { seenUrl } from '../src/tools/fetch.ts';
 import { runTool, usableTools } from '../src/tools/index.ts';
-import { agentView, jobFileForViewer, jobView, worldView } from '../src/views.ts';
+import { agentView, jobFileForViewer, jobView } from '../src/views.ts';
 import { backgroundIdle } from '../src/world/background.ts';
 import { brainContext } from '../src/world/context.ts';
 import { houseAccount, openJob } from '../src/world/jobs.ts';
@@ -157,9 +154,8 @@ async function bid(agentId: string, key: string) {
 const sourceOf = async (key: string) =>
   (await w.engine.db.select().from(inferenceCalls).where(eq(inferenceCalls.key, key)))[0]?.source;
 
-describe('live NEAR AI for players only, under a daily budget', () => {
+describe('live NEAR AI for player agents only', () => {
   it("a player's agent thinks live; a house agent uses the recorded brain", async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
     const mine = await playerAgent();
     const before = stats.chats;
     const first = await bid(mine.id, `live-p${seq}`);
@@ -186,61 +182,11 @@ describe('live NEAR AI for players only, under a daily budget', () => {
     expect((await agentView(w.engine, mine, null)).brain).toEqual({ source: 'live', why: 'live' });
   });
 
-  it('spend is counted from the billed cost and never passes the budget, even reserved', async () => {
-    const budget = await liveAiBudget(w.engine);
-    expect(budget.spentNano).toBeGreaterThan(0n);
-    const [row] = await w.engine.db
-      .select()
-      .from(nearaiBudget)
-      .where(eq(nearaiBudget.day, utcDay()));
-    expect(row!.reservedNano).toBe(0n);
-    expect(row!.spentNano + row!.reservedNano).toBeLessThanOrEqual(w.engine.liveAiBudgetNano);
-  });
-
-  it('once the budget would be passed, player agents fall back to the recorded brain, and the game says so', async () => {
-    const spent = (await liveAiBudget(w.engine)).spentNano;
-    // Room for less than one call's worst case.
-    w.engine.liveAiBudgetNano = spent + 1n;
+  it('an empty reply (a model that ran out of tokens reasoning) is never charged to the agent', async () => {
     const mine = await playerAgent();
-    const chatsBefore = stats.chats;
-    expect((await bid(mine.id, `over-${seq}`)).ok).toBe(true);
-    expect(stats.chats).toBe(chatsBefore);
-    expect(await sourceOf(`over-${seq}`)).toBe('recorded');
-    const after = await liveAiBudget(w.engine);
-    expect(after.reached).toBe(true);
-    expect(after.spentNano).toBe(spent);
-    expect((await worldView(w.engine)).liveAi?.reached).toBe(true);
-    expect((await agentView(w.engine, mine, null)).brain).toEqual({
-      source: 'recorded',
-      why: 'budget_reached',
-    });
-    // Raising the budget mid-day doesn't undo today's fallback: it lasts until the UTC reset.
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    const again = stats.chats;
-    await bid(mine.id, `still-${seq}`);
-    expect(stats.chats).toBe(again);
-  });
-
-  it('a new UTC day starts with a fresh budget', async () => {
-    await w.engine.db
-      .update(nearaiBudget)
-      .set({ day: '2000-01-01' })
-      .where(eq(nearaiBudget.day, utcDay()));
-    const fresh = await liveAiBudget(w.engine);
-    expect(fresh).toMatchObject({ spentNano: 0n, reached: false, calls: 0 });
-    const mine = await playerAgent();
-    const before = stats.chats;
-    await bid(mine.id, `newday-${seq}`);
-    expect(stats.chats).toBe(before + 1);
-  });
-
-  it('an empty reply (a model that ran out of tokens reasoning) counts against the budget, never the agent', async () => {
-    const mine = await playerAgent();
-    const spentBefore = (await liveAiBudget(w.engine)).spentNano;
     const balanceBefore = await w.engine.chain.ftBalance(mine.accountId!);
     stats.failNextWithBill = 1n;
     expect(await bid(mine.id, `empty-${seq}`)).toEqual({ ok: false, reason: 'provider' });
-    expect((await liveAiBudget(w.engine)).spentNano).toBe(spentBefore + 50_000n);
     expect(await w.engine.chain.ftBalance(mine.accountId!)).toBe(balanceBefore);
     const booked = await w.engine.db
       .select()
@@ -249,14 +195,7 @@ describe('live NEAR AI for players only, under a daily budget', () => {
     expect(booked).toHaveLength(0);
   });
 
-  it('the budget is a dollar amount, read without floats', () => {
-    expect(usdToNano('1.00')).toBe(1_000_000_000n);
-    expect(usdToNano('0.25')).toBe(250_000_000n);
-    expect(() => usdToNano('one dollar')).toThrow('NEARAI_DAILY_BUDGET_USD');
-  });
-
   it('a tool call pays its tokens plus the provider fee, and keeps the sources on its receipt', async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
     const mine = await playerAgent();
     const job = await aJob('research');
     expect(usableTools(w.engine, mine, job).map((t) => t.id)).toEqual([
@@ -290,31 +229,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
       .where(eq(players.isHouse, true))
       .limit(1);
     expect(usableTools(w.engine, house!.agent, job)).toEqual([]);
-    // With the day's live budget spent, the recorded brain never stands in for a search.
-    w.engine.liveAiBudgetNano = 0n;
-    expect(await runTool(w.engine, mine, await aJob('research'), 'web_search')).toEqual({
-      ok: false,
-      reason: 'provider',
-    });
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-  });
-
-  it('a tool that doesn’t fit its share of the budget is refused, without ending live AI for the day', async () => {
-    const mine = await playerAgent();
-    await w.engine.db.delete(nearaiBudget).where(eq(nearaiBudget.day, utcDay()));
-    // Four cents a day: a search's worst case (about 3.5 cents) is more than the tools' half.
-    w.engine.liveAiBudgetNano = usdToNano('0.04');
-    w.engine.toolsOpen = true;
-    expect(await runTool(w.engine, mine, await aJob('research'), 'web_search')).toEqual({
-      ok: false,
-      reason: 'provider',
-    });
-    expect(w.engine.toolsOpen).toBe(false);
-    expect((await liveAiBudget(w.engine)).reached).toBe(false);
-    expect(await bid(mine.id, `after-tool-${seq}`)).toMatchObject({ ok: true });
-    expect(await sourceOf(`after-tool-${seq}`)).toBe('live');
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    w.engine.toolsOpen = true;
   });
 
   it('the Python tool writes code, runs it in the sandbox on the job files, and pays per run', async () => {
@@ -368,8 +282,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
   });
 
   it('a live agent works a job by its own loop: it runs code, writes a file and delivers', async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    w.engine.toolsOpen = true;
     const mine = await playerAgent();
     const job = await aJob('research');
     await saveJobFile(w.engine, job.id, 'data.csv', 'a,b\n1,2\n', 'client');
@@ -408,8 +320,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
   }, 120_000);
 
   it('a scam inside the loop: the agent tries to pay, and its own wallet refuses on chain', async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    w.engine.toolsOpen = true;
     const mine = await playerAgent();
     const job = await aJob('research');
     actScript.push(
@@ -447,8 +357,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
   }, 120_000);
 
   it('a dispute is ruled by an attested model reading the brief and the work, off the lane', async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    w.engine.toolsOpen = true;
     const mine = await playerAgent();
     const job = await aJob('research');
     actScript.push(
@@ -515,8 +423,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
   });
 
   it('an agent subcontracts one part: the specialist sees only that part, works it by its own loop, and is paid through the rulebook', async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    w.engine.toolsOpen = true;
     const mine = await playerAgent();
     const specialist = await playerAgent();
     const job = await aJob('research');
@@ -575,8 +481,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
   }, 180_000);
 
   it('the agent may ask a person who posted a task one question, and waits for the answer', async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    w.engine.toolsOpen = true;
     const mine = await playerAgent();
     const client = await w.signUp(`asker${seq}@example.com`, `Asker${seq}`);
     const job = await postTask(w.engine, client, {
@@ -697,8 +601,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
   });
 
   it('an agent runs a command on its owner’s computer: paired, approved there, results back into the loop', async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    w.engine.toolsOpen = true;
     const mine = await playerAgent();
     const [owner] = await w.engine.db.select().from(players).where(eq(players.id, mine.ownerId));
     // Pairing: a one-time code, traded once for a token.
@@ -792,8 +694,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
   }, 180_000);
 
   it('no command without the client’s say-so, or with the owner’s computer offline', async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    w.engine.toolsOpen = true;
     const mine = await playerAgent();
     const job = await aJob('research');
     actScript.push(
@@ -824,16 +724,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
     expect(tasks).toHaveLength(0);
   }, 180_000);
 
-  it('when search is out of budget for the day, the other tools (and the agent loop) stay open', async () => {
-    const mine = await playerAgent();
-    w.engine.toolsOpen = false;
-    const ids = toolsFor(w.engine, mine).map((t) => t.id);
-    expect(ids).not.toContain('web_search');
-    expect(ids).toEqual(expect.arrayContaining(['python', 'chain_data', 'fetch']));
-    w.engine.toolsOpen = true;
-    expect(toolsFor(w.engine, mine).map((t) => t.id)).toContain('web_search');
-  });
-
   it('a linked computer stops counting once the agent changes hands', async () => {
     const mine = await playerAgent();
     const [owner] = await w.engine.db.select().from(players).where(eq(players.id, mine.ownerId));
@@ -847,8 +737,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
   });
 
   it('a write whose file name sits on the block’s first line is still saved under that name', async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    w.engine.toolsOpen = true;
     const mine = await playerAgent();
     const job = await aJob('research');
     actScript.push(
@@ -877,8 +765,6 @@ describe('live NEAR AI for players only, under a daily budget', () => {
   }, 120_000);
 
   it('a fixed version of a client file is saved beside the original, which stays as sent', async () => {
-    w.engine.liveAiBudgetNano = usdToNano('1.00');
-    w.engine.toolsOpen = true;
     const mine = await playerAgent();
     const job = await aJob('research');
     await saveJobFile(w.engine, job.id, 'calc.js', 'export const f = () => 1;\n', 'client');

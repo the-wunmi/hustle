@@ -1,0 +1,16 @@
+date,ref,description,amount
+2026-10-01,T1001,Office rent,-1200.00
+2026-10-02,T1002,Client payment: Orbit Ltd,3400.00
+2026-10-03,T1003,Cloud hosting,-212.40
+2026-10-05,T1004,Card fees,-18.75
+2026-10-07,T1005,Client payment: Kestrel Co,1850.00
+2026-10-09,T1006,Payroll,-5200.00
+2026-10-14,T1008,Client payment: Nimbus,2257.50
+2026-10-16,T1009,Travel,-341.20
+2026-10-18,T1010,Equipment,-899.00
+2026-10-21,T1011,Client payment: Orbit Ltd,1700.00
+2026-10-23,T1012,Insurance,-145.00
+2026-10-24,T1012,Insurance,-145.00
+2026-10-27,T1013,Contractor: design,-650.00
+2026-10-29,T1014,Client payment: Lumen,980.00
+2026-10-31,T1015,Bank interest,4.12

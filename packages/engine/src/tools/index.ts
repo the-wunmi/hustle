@@ -8,7 +8,6 @@ import {
 } from '@hustle/economy';
 import { like } from 'drizzle-orm';
 import { type AgentRow, snapshotOf, tierOf } from '../agents/state.ts';
-import { toolsOpenToday } from '../brain/budget.ts';
 import type { Engine } from '../context.ts';
 import { toolsFor } from '../context.ts';
 import { backgroundIdle, isRunning, startBackground } from '../world/background.ts';
@@ -153,17 +152,4 @@ export async function runTool(
     if (step !== 'wait') return step;
     await backgroundIdle();
   }
-}
-
-/** Reads whether today's live budget still has room for a tool call (once a tick). */
-export async function refreshToolsOpen(engine: Engine): Promise<void> {
-  if (engine.nearai.mode !== 'live' || engine.tools.length === 0) return;
-  // Only provider services draw on the tool budget, so only they set the typical cost.
-  const typical = engine.tools
-    .filter((s) => s.service)
-    .reduce((t, s) => {
-      const c = toolCost(s, engine.brains.standard) * 1000n;
-      return c > t ? c : t;
-    }, 0n);
-  engine.toolsOpen = await toolsOpenToday(engine, typical);
 }

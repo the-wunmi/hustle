@@ -77,7 +77,6 @@ import {
   tierOf,
   traitsOf,
 } from './agents/state.ts';
-import { liveAiBudget } from './brain/budget.ts';
 import { brainSourceFor } from './brain/think.ts';
 import { dayOf, type Engine, hourOf, toolsFor } from './context.ts';
 import type { PlayerRow } from './players.ts';
@@ -1075,7 +1074,6 @@ async function brainView(engine: Engine, row: AgentRow): Promise<AgentView['brai
   if (engine.nearai.mode !== 'live') return { source: 'recorded', why: 'no_key' };
   if ((await brainSourceFor(engine, row)) === 'recorded')
     return { source: 'recorded', why: 'house' };
-  if ((await liveAiBudget(engine)).reached) return { source: 'recorded', why: 'budget_reached' };
   return { source: 'live', why: 'live' };
 }
 
@@ -1098,17 +1096,8 @@ export async function worldView(engine: Engine): Promise<WorldView> {
     .from(ledger)
     .where(and(eq(ledger.day, dayOf(engine)), eq(ledger.kind, 'job_payout')));
   const day = dayOf(engine);
-  const budget = engine.nearai.mode === 'live' ? await liveAiBudget(engine) : null;
   return {
     day,
-    liveAi: budget
-      ? {
-          budget: (budget.budgetNano / 1000n).toString(),
-          spent: ((budget.spentNano + 999n) / 1000n).toString(),
-          calls: budget.calls,
-          reached: budget.reached,
-        }
-      : null,
     tick: engine.clock.tick,
     dayTicks: engine.dayTicks,
     tickMs: engine.tickMs,

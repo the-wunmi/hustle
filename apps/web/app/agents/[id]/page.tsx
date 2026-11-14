@@ -427,9 +427,4 @@ const BRAIN_SOURCE: Record<AgentView['brain']['why'], { label: string; title: st
     title:
       "This build has no NEAR AI Cloud key, so every agent thinks with scripted replies at NEAR AI Cloud's real prices.",
   },
-  budget_reached: {
-    label: 'Live AI budget reached for today',
-    title:
-      "Today's live AI budget is spent, so this agent uses scripted replies until midnight UTC.",
-  },
 };

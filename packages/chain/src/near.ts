@@ -205,8 +205,6 @@ export interface NearChainOptions {
   network?: NearNetwork;
   /** Least NEAR the root and the operator keep; below it `reserveShortfall` names the account. */
   reserve?: { root: bigint; operator: bigint };
-  /** Most NEAR the root refills into one signer per UTC day (`refillSigner`), from the tx log. */
-  refillCapPerDay?: bigint;
   /**
    * Durable log of sent transactions (the game passes a Postgres one). Without it the gateway keeps
    * an in-memory index, which is enough for tests but forgets everything on restart.
@@ -734,24 +732,13 @@ export class NearChain implements ChainGateway {
     if (this.funding.accountLow === 0n) return;
     const floor = maxBig(this.funding.accountLow, oneCall);
     if (amount >= floor) return;
-    // Players: at most `refillCapPerDay / accountRefill` refills per UTC day, each keyed by signer,
-    // day and number so the count lives in the tx log and survives restarts. Past it the signer
-    // waits for tomorrow, so a player looping owner actions can't drain the root.
-    // Each refill is clamped to `accountRefill`, so `most` refills can never send more than the cap.
+    // Players: topped up by `accountRefill` whenever they run low.
     const top = minBig(floor + this.funding.accountRefill - amount, this.funding.accountRefill);
-    const cap = this.opts.refillCapPerDay ?? 10n ** 23n;
-    const most = Number(cap / this.funding.accountRefill);
-    const day = new Date().toISOString().slice(0, 10);
-    for (let n = 1; n <= most; n++) {
-      const key = `refill:${signerId}:${day}:${n}`;
-      if (await this.settledByKey(key)) continue;
-      await this.send(this.ids.root, signerId, [actions.transfer(top)], {
-        method: 'transfer',
-        args: { amount: top.toString() },
-        key,
-      });
-      return;
-    }
+    await this.send(this.ids.root, signerId, [actions.transfer(top)], {
+      method: 'transfer',
+      args: { amount: top.toString() },
+      key: null,
+    });
   }
 
   private warnedRootLow = false;
@@ -764,14 +751,6 @@ export class NearChain implements ChainGateway {
     const price = BigInt((await this.provider.viewGasPrice()).gas_price);
     this.gasPriceCache = { at: Date.now(), price };
     return price;
-  }
-
-  /** How many refills `signerId` has had today (tests and the reserve log read this). */
-  async refillsToday(signerId: string): Promise<number> {
-    const day = new Date().toISOString().slice(0, 10);
-    let n = 0;
-    while (await this.settledByKey(`refill:${signerId}:${day}:${n + 1}`)) n++;
-    return n;
   }
 
   private reserveCache: { at: number; short: string | null } | null = null;

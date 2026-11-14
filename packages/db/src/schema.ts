@@ -72,20 +72,6 @@ export const walletChallenges = pgTable('wallet_challenges', {
   createdAt: createdAt(),
 });
 
-/**
- * Global per-day counters for actions that cost the game NEAR (new player accounts, agent mints), so
- * a flood of free sign-ins can't drain the operator. Keyed by UTC day and kind.
- */
-export const dailyCaps = pgTable(
-  'daily_caps',
-  {
-    day: text('day').notNull(),
-    kind: text('kind').notNull(),
-    count: integer('count').notNull().default(0),
-  },
-  (t) => [primaryKey({ columns: [t.day, t.kind] })],
-);
-
 export const sessions = pgTable('sessions', {
   tokenHash: text('token_hash').primaryKey(),
   playerId: uuid('player_id')
@@ -530,21 +516,6 @@ export const inferenceCalls = pgTable(
     index('inference_agent_ix').on(t.agentId, t.tick),
   ],
 );
-
-/**
- * The org's live NEAR AI spend per UTC day, against `NEARAI_DAILY_BUDGET_USD`. A call reserves its
- * worst-case cost before it is made and settles to the exact billed cost after, so concurrent calls
- * can't together pass the budget. A new UTC day is a new row, which is the midnight reset.
- */
-export const nearaiBudget = pgTable('nearai_budget', {
-  day: text('day').primaryKey(),
-  spentNano: money('spent_nano').notNull().default(sql`0`),
-  reservedNano: money('reserved_nano').notNull().default(sql`0`),
-  calls: integer('calls').notNull().default(0),
-  /** A call was turned away for lack of budget today: player agents are on the recorded brain. */
-  exhausted: boolean('exhausted').notNull().default(false),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
 
 /** Every spend request sent to an agent wallet, and what the wallet said. */
 export const spends = pgTable(

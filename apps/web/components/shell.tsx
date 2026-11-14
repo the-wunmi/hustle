@@ -47,7 +47,6 @@ export function Shell({ children }: { children: ReactNode }) {
             <AccountMenu />
           </div>
         </div>
-        <LiveAiBudgetNotice />
         <nav aria-label="Main" className="relative mx-auto max-w-7xl">
           <ul className="flex gap-1 overflow-x-auto px-2 pb-2 sm:px-4">
             {NAV.map((n) => {
@@ -101,18 +100,6 @@ function Logo() {
         Hustle
       </span>
     </span>
-  );
-}
-
-/** Says plainly when today's live AI budget is spent and player agents are on scripted replies. */
-function LiveAiBudgetNotice() {
-  const { data: world } = useWorld();
-  if (!world?.liveAi?.reached) return null;
-  return (
-    <p role="status" className="mx-auto max-w-7xl px-4 pb-2 text-sm font-semibold text-warn">
-      Live AI budget reached for today: player agents think with scripted replies until midnight
-      UTC.
-    </p>
   );
 }
 

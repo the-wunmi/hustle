@@ -30,7 +30,7 @@ const TOOL_CALL_TIMEOUT_MS = 180_000;
 /**
  * The real NEAR AI Cloud. The model list and attestation shapes were checked against live responses on
  * 2026-11-11, and chat, signatures and `/v1/billing/costs` on 2026-11-12. Per-agent key creation and
- * spend limits need a session token and are still UNVERIFIED (see CLAUDE.md).
+ * spend limits need a session token and are still UNVERIFIED (see AGENTS.md).
  */
 export class NearAiCloudClient implements NearAiCloud {
   readonly mode = 'live' as const;

@@ -44,7 +44,6 @@ import {
 import { createSandbox, type Sandbox } from '@hustle/sandbox';
 import { eq } from 'drizzle-orm';
 import { ACHIEVEMENTS } from './achievements.ts';
-import { DEFAULT_DAILY_BUDGET_USD, usdToNano } from './brain/budget.ts';
 import { scriptedResponse } from './brain/scripted.ts';
 import { launchDurable, shutdownDurable } from './durable.ts';
 
@@ -72,8 +71,6 @@ export interface Engine {
   nearai: NearAiCloud;
   /** Scripted replies at real prices: house agents, and player agents once the live budget is spent. */
   recordedBrain: NearAiCloud;
-  /** Most the org spends on live NEAR AI calls per UTC day, nano-USD (`NEARAI_DAILY_BUDGET_USD`). */
-  liveAiBudgetNano: bigint;
   auth: NearAuth;
   /** Present when AUTH_MODE=mock: issues the id tokens the simulated login steps hand out. */
   authSim: NearAuthSimulator | null;
@@ -87,7 +84,6 @@ export interface Engine {
   /** Settles once they have (never rejects). */
   recovered: Promise<void>;
   /** Most new on-chain player accounts and agent mints per UTC day (Infinity: no cap). */
-  dailyCaps: { accounts: number; mints: number };
   /** Which of the game's NEAR accounts is below its reserve, if any (null: all fine). */
   reserveCheck: () => Promise<string | null>;
   cfg: EconomyConfig;
@@ -96,8 +92,6 @@ export interface Engine {
   tools: readonly ToolSpec[];
   /** House players' ids: their agents run on the recorded brain, so they never use provider tools. */
   houseOwners: Set<string>;
-  /** Whether today's live budget can still pay for a tool call; refreshed every tick. */
-  toolsOpen: boolean;
   /** Where agents' code runs: the isolated sandbox service, or in-process in development; null: none. */
   sandbox: Sandbox | null;
   /** Read-only NEAR mainnet endpoints for the chain data tool (public data, never signed with). */
@@ -137,7 +131,6 @@ export interface EngineOptions {
   secret?: string;
   /** Tests stand in for testnet's access-key lookup. */
   walletKeys?: Engine['walletKeys'];
-  dailyCaps?: Engine['dailyCaps'];
   reserveCheck?: Engine['reserveCheck'];
   /** Tests pass their own sandbox (or null for none). */
   sandbox?: Sandbox | null;
@@ -331,17 +324,11 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     chain,
     nearai,
     recordedBrain,
-    liveAiBudgetNano: usdToNano(env.NEARAI_DAILY_BUDGET_USD ?? DEFAULT_DAILY_BUDGET_USD),
     auth,
     authSim,
     walletKeys: opts.walletKeys ?? testnetKeyLookup(env),
     recovering: false,
     recovered: Promise.resolve(),
-    // On testnet NEAR is scarce: cap what costs it per day (DAILY_NEW_ACCOUNTS, DAILY_AGENT_MINTS).
-    dailyCaps: opts.dailyCaps ?? {
-      accounts: capFromEnv(env.DAILY_NEW_ACCOUNTS, chainMode === 'testnet' ? 30 : Infinity),
-      mints: capFromEnv(env.DAILY_AGENT_MINTS, chainMode === 'testnet' ? 60 : Infinity),
-    },
     reserveCheck:
       opts.reserveCheck ??
       (() =>
@@ -351,7 +338,6 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
     brains,
     tools,
     houseOwners,
-    toolsOpen: true,
     sandbox: opts.sandbox !== undefined ? opts.sandbox : createSandbox(env),
     mainnetRpcUrl: env.NEAR_MAINNET_RPC_URL || 'https://rpc.mainnet.fastnear.com',
     fastNearApiUrl: env.FASTNEAR_API_URL || 'https://api.fastnear.com',
@@ -423,17 +409,11 @@ function reviveBrains(value: unknown): Record<Tier, Brain> {
 // ── Clock helpers ───────────────────────────────────────────────────────────────────────────────
 
 /**
- * The tools this agent will really use: every tool needs a live brain (which house agents never
- * have); a provider service (web search, billed by NEAR AI per use) also needs room in today's tool
- * budget. The rest (Python, chain data, pages, the owner's computer) stay open all day, so the agent
- * loop doesn't stop when search does. Bid floors, the per-job cap and quality price only these.
+ * The tools this agent will really use: every tool needs a live brain, which the game's house agents
+ * never have. Bid floors, the per-job cap and quality price only these.
  */
 export const toolsFor = (engine: Engine, agent: { ownerId: string }): readonly ToolSpec[] =>
-  engine.nearai.mode === 'live' && !engine.houseOwners.has(agent.ownerId)
-    ? engine.toolsOpen
-      ? engine.tools
-      : engine.tools.filter((t) => !t.service)
-    : [];
+  engine.nearai.mode === 'live' && !engine.houseOwners.has(agent.ownerId) ? engine.tools : [];
 
 export const dayOf = (engine: Engine, tick = engine.clock.tick): number =>
   Math.floor(tick / engine.dayTicks) + 1;
@@ -532,7 +512,6 @@ async function testnetChain(
       root: nearAmount(env.NEAR_RESERVE_ROOT ?? '2'),
       operator: nearAmount(env.NEAR_RESERVE_OPERATOR ?? '2'),
     },
-    refillCapPerDay: nearAmount(env.NEAR_REFILL_CAP_PER_DAY ?? '0.1'),
   });
   const missing = await chain.planSetup(setup);
   if (missing.length > 0) {
@@ -558,12 +537,6 @@ function testnetKeyLookup(env: NodeJS.ProcessEnv): Engine['walletKeys'] {
     provider ??= new PacedRpcProvider({ urls: [primary, ...fallbacks], maxPerSecond: 4 });
     return accessKeyPermission(provider, accountId, publicKey);
   };
-}
-
-function capFromEnv(value: string | undefined, fallback: number): number {
-  if (!value) return fallback;
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 /** "2" or "0.1" NEAR in yoctoNEAR. */

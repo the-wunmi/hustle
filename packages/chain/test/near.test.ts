@@ -140,43 +140,6 @@ if (enabled) {
     }, 120_000);
   });
 
-  describe('refills are capped per signer per day (testnet amounts, on the sandbox)', () => {
-    it('a player who keeps spending gas is refilled at most up to the daily cap', async () => {
-      const lean = new NearChain({
-        rpcUrl: node.rpcUrl,
-        root: `hustle.${node.funderId}`,
-        funderId: node.funderId,
-        funderKey: node.funderKey,
-        network: 'testnet',
-        // Two refills of 0.03 a day.
-        refillCapPerDay: 6n * 10n ** 22n,
-      });
-      const provider = new JsonRpcProvider({ url: node.rpcUrl });
-      const player = `p-${unique('')}.${lean.ids.root}`;
-      await lean.createAccount(player);
-      await lean.mintCredits(player, 5_000_000n, `mint:${player}`);
-      // Spend the player's NEAR down below the refill line, as a looping script's gas would.
-      const drain = async () => {
-        const { amount } = await provider.viewAccount({ accountId: player });
-        const keep = 2n * 10n ** 22n;
-        if (BigInt(amount) > keep)
-          await new Account(player, provider, KeyPairSigner.fromSecretKey(node.funderKey)).transfer(
-            {
-              receiverId: lean.ids.root,
-              amount: BigInt(amount) - keep,
-            },
-          );
-      };
-      for (let i = 0; i < 3; i++) {
-        await drain();
-        await lean
-          .ftTransfer(player, lean.ids.treasury, 1n, `loop${i}`, `loop:${player}:${i}`)
-          .catch(() => undefined);
-      }
-      expect(await lean.refillsToday(player)).toBe(2);
-    }, 180_000);
-  });
-
   describe('house signers on the local node', () => {
     it('a drained house signer is topped up from the root, and its call goes through', async () => {
       const provider = new JsonRpcProvider({ url: node.rpcUrl });

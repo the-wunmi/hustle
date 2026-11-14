@@ -3,7 +3,6 @@ import { reflectOnJobs } from '../agents/memory.ts';
 import { refreshAllBalances } from '../agents/state.ts';
 import { expireCalls, raiseCalls } from '../calls.ts';
 import { dayOf, type Engine, saveClock } from '../context.ts';
-import { refreshToolsOpen } from '../tools/index.ts';
 import { houseTrading } from '../trade.ts';
 import { endDay } from './day.ts';
 import { activeAgents, closeAuctions, placeBids, spawnJobs, tickRng } from './market.ts';
@@ -27,7 +26,6 @@ export function tickPhases(engine: Engine): (() => Promise<void>)[] {
     async () => {
       engine.clock.tick += 1;
       await saveClock(engine);
-      await refreshToolsOpen(engine);
       // Close every finished day, oldest first. Each day's close is a workflow keyed by the day, so
       // one cut short by a crash resumes where it stopped, and asking again for a closed day is a no-op.
       const lastFinished = dayOf(engine) - 1;

@@ -5,7 +5,6 @@ import { briefOf } from '@hustle/economy';
 import { verifyCompletion } from '@hustle/nearai';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { reserveLive, settleLive } from '../brain/budget.ts';
 import { attestationFor } from '../brain/think.ts';
 import { dayOf, type Engine } from '../context.ts';
 import { jobFilesOf, saveJobFile } from '../files.ts';
@@ -317,15 +316,6 @@ async function plainAttempt(engine: Engine, model: string, inst: Instance): Prom
     ...inst.files.map((f) => `--- ${f.name} ---\n${f.content}`),
     'Answer the task in full. Show any code you write in a ```python block.',
   ].join('\n\n');
-  const inTokens = Math.ceil(prompt.length / 3.5);
-  const worst =
-    ((BigInt(Math.ceil(inTokens * 1.5)) * brain.inputPerM +
-      BigInt(OUT_TOKENS * 2) * brain.outputPerM) *
-      1000n) /
-    1_000_000n;
-  const day = await reserveLive(engine, worst);
-  if (!day) return null;
-  let billed: bigint | undefined;
   try {
     const attestation = await attestationFor(engine, engine.nearai, model);
     const key = (await engine.nearai.createAgentKey('hustle challenges', 10n ** 9n)).key;
@@ -334,7 +324,6 @@ async function plainAttempt(engine: Engine, model: string, inst: Instance): Prom
       max_tokens: OUT_TOKENS * 2,
       messages: [{ role: 'user', content: prompt }],
     });
-    billed = (await engine.nearai.costs([result.inferenceId]))[result.inferenceId];
     const verification = verifyCompletion(
       'live',
       result,
@@ -347,8 +336,6 @@ async function plainAttempt(engine: Engine, model: string, inst: Instance): Prom
   } catch (err) {
     engine.log('plain attempt failed', { error: String(err) });
     return null;
-  } finally {
-    await settleLive(engine, day, worst, billed ?? worst);
   }
 }
 

@@ -15,7 +15,6 @@ import { z } from 'zod';
 import { type AgentRow, refreshBalance, rulebookOf, tierOf } from '../agents/state.ts';
 import { dayOf, type Engine } from '../context.ts';
 import { book, chainKey, post } from '../record.ts';
-import { reserveLive, settleLive, toolBudgetNano } from './budget.ts';
 import {
   type BrainContext,
   buildMessages,
@@ -47,9 +46,6 @@ export interface CallTools {
   /** The sources a call's results name, kept on the receipt so anyone can check them. */
   sources: (results: ProviderToolResult[]) => { title: string; url: string }[];
 }
-
-/** Uses reserved against the live AI budget for one tool call (the provider may search more than once). */
-const WORST_TOOL_USES = 3;
 
 /** Most output tokens a call may request: caps the bill no matter what the model wants to write. */
 const MAX_TOKENS = 6_000;
@@ -195,32 +191,13 @@ export async function think<P extends Purpose>(
     return { ok: false, reason: 'capped' };
   const maxTokens = Math.min(MAX_TOKENS, ctx.workload.outTokens * 2) + REASONING_BUDGET;
 
-  // Which brain answers: live NEAR AI Cloud for a real player's agent while today's live budget
-  // lasts (the call's worst case is reserved first), the recorded brain otherwise.
+  // Which brain answers: live NEAR AI Cloud for a player's agent, the recorded brain for the game's
+  // own house agents.
   const source = await brainSourceFor(engine, agent);
-  const worstNano =
-    source === 'live'
-      ? ((BigInt(Math.ceil(ctx.workload.inTokens * 1.5)) * brain.inputPerM +
-          BigInt(maxTokens) * brain.outputPerM) *
-          1000n) /
-          1_000_000n +
-        (tools?.feePerUse ?? 0n) *
-          1000n *
-          BigInt(Math.max(WORST_TOOL_USES, (tools?.expectedUses ?? 0) * 2))
-      : 0n;
-  // Tool calls draw on their own share of the day's budget; a refusal closes tools until it frees up.
-  const reservedDay =
-    source === 'live'
-      ? await reserveLive(engine, worstNano, tools ? toolBudgetNano(engine) : undefined)
-      : null;
-  if (tools && !reservedDay) engine.toolsOpen = false;
-  const live = source === 'live' && reservedDay !== null;
+  const live = source === 'live';
   // Provider tools are real work only a live provider does: the recorded brain never stands in.
   if (tools && !live) return { ok: false, reason: 'provider' };
   const provider = live ? engine.nearai : engine.recordedBrain;
-  const settleBudget = async (nano: bigint | undefined) => {
-    if (reservedDay) await settleLive(engine, reservedDay, worstNano, nano ?? worstNano);
-  };
 
   // A row left `started` means the process stopped mid-call: the provider may have billed, so this
   // retry is a known re-bill risk, recorded rather than hidden.
@@ -276,14 +253,8 @@ export async function think<P extends Purpose>(
     });
   } catch (err) {
     if (err instanceof NearAiError) {
-      // A call the provider handled before it failed (a reasoning model that ran out of tokens
-      // answers with no content) was still billed: it counts against the budget, never the agent.
-      const billed = err.inferenceId
-        ? (await provider.costs([err.inferenceId]).catch((): Record<string, bigint> => ({})))[
-            err.inferenceId
-          ]
-        : 0n;
-      await settleBudget(billed);
+      // A call the provider failed (or answered with no content, like a reasoning model that ran out
+      // of tokens) is never charged to the agent.
       engine.log('inference failed', { agent: agent.name, code: err.code });
       await engine.db
         .update(inferenceCalls)
@@ -301,7 +272,6 @@ export async function think<P extends Purpose>(
   const toolUses = tools ? tools.uses(toolResults) : 0;
   const toolFee = (tools?.feePerUse ?? 0n) * BigInt(toolUses);
   const nano = tokenNano === undefined ? undefined : tokenNano + toolFee * 1000n;
-  await settleBudget(nano);
   // No cost from billing yet: charge the estimate rather than nothing. A zero-cost call still moves
   // one micro-USD, because the wallet refuses zero transfers; the ledger books the same amount.
   const metered = nano === undefined ? estimate : nanoToMicroCeil(nano);

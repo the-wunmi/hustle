@@ -54,7 +54,6 @@ export interface WorldView {
   demand: Record<Category, number>;
   modes: ModesView;
   /** Live NEAR AI spend today against the org's daily budget (null when inference isn't live). */
-  liveAi: { budget: MicroString; spent: MicroString; calls: number; reached: boolean } | null;
   stats: {
     activeAgents: number;
     dormantAgents: number;
@@ -139,7 +138,7 @@ export interface AgentSummaryView {
  */
 export interface BrainSourceView {
   source: 'live' | 'recorded';
-  why: 'live' | 'house' | 'no_key' | 'budget_reached';
+  why: 'live' | 'house' | 'no_key';
 }
 
 export interface ChallengeView {

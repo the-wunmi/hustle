@@ -21,12 +21,7 @@ import {
   wfId,
   workflowExists,
 } from './durable.ts';
-import {
-  ACCOUNTS_PER_PARENT_PER_DAY,
-  assertNearReserve,
-  takeDailySlot,
-  walletParent,
-} from './guards.ts';
+import { assertNearReserve } from './guards.ts';
 import { book, post } from './record.ts';
 
 export type PlayerRow = typeof players.$inferSelect;
@@ -414,12 +409,6 @@ export async function ensurePlayerAccount(engine: Engine, player: PlayerRow): Pr
   // A retry of an account already being made doesn't count again.
   if (!(await workflowExists(wfId(engine, 'account', player.accountId)))) {
     await assertNearReserve(engine);
-    // Sub-accounts of one parent count against that parent first, so a script making
-    // `aN.someone.testnet` accounts runs out long before the day's global cap does.
-    const parent = player.walletAccountId ? walletParent(player.walletAccountId) : null;
-    if (parent && Number.isFinite(engine.dailyCaps.accounts))
-      await takeDailySlot(engine, `parent:${parent}`, ACCOUNTS_PER_PARENT_PER_DAY);
-    await takeDailySlot(engine, 'accounts');
   }
   return runOnce(accountWorkflow, wfId(engine, 'account', player.accountId), {
     playerId: player.id,

@@ -37,7 +37,7 @@ import {
   wfId,
   workflowExists,
 } from '../durable.ts';
-import { assertNearReserve, takeDailySlot } from '../guards.ts';
+import { assertNearReserve } from '../guards.ts';
 import type { PlayerRow } from '../players.ts';
 import { ensurePlayerAccount } from '../players.ts';
 import { book, chainKey, post } from '../record.ts';
@@ -147,11 +147,8 @@ export async function mintAgent(
     .from(agents)
     .where(sql`lower(${agents.name}) = lower(${data.name})`);
   if (taken) throw new DomainError('conflict', `${data.name} is already taken. Try another name.`);
-  // Each mint costs the operator NEAR: players' mints are capped per day and stop at the reserve.
-  if (!owner.isHouse) {
-    await assertNearReserve(engine);
-    await takeDailySlot(engine, 'mints');
-  }
+  // Each mint costs the operator NEAR: players' mints stop if it's down to its reserve.
+  if (!owner.isHouse) await assertNearReserve(engine);
   const agentId = randomUUID();
   const res = await runOnce(mintWorkflow, wfId(engine, 'mint', agentId), {
     agentId,

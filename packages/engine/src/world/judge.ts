@@ -5,7 +5,6 @@ import { verifyCompletion } from '@hustle/nearai';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { AgentRow } from '../agents/state.ts';
-import { reserveLive, settleLive } from '../brain/budget.ts';
 import { attestationFor, brainSourceFor } from '../brain/think.ts';
 import type { Engine } from '../context.ts';
 import { jobFilesOf } from '../files.ts';
@@ -105,16 +104,7 @@ async function workFor(engine: Engine, job: JobRow): Promise<string> {
 async function modelRuling(engine: Engine, job: JobRow): Promise<Ruling | null> {
   const brain = engine.brains.premium;
   const work = await workFor(engine, job);
-  const inTokens = Math.ceil((work.length + job.body.length + 2_000) / 3.5);
-  const worstNano =
-    ((BigInt(Math.ceil(inTokens * 1.5)) * brain.inputPerM +
-      BigInt(OUT_TOKENS * 2) * brain.outputPerM) *
-      1000n) /
-    1_000_000n;
-  const day = await reserveLive(engine, worstNano);
-  if (!day) return null;
-  let billed: bigint | undefined;
-  try {
+  {
     const attestation = await attestationFor(engine, engine.nearai, brain.model);
     const key = (await engine.nearai.createAgentKey('hustle arbiter', 10n ** 9n)).key;
     const result = await engine.nearai.chat(key, {
@@ -136,7 +126,6 @@ async function modelRuling(engine: Engine, job: JobRow): Promise<Ruling | null> 
         json_schema: { name: 'ruling', schema: z.toJSONSchema(JudgeOutput) },
       },
     });
-    billed = (await engine.nearai.costs([result.inferenceId]))[result.inferenceId];
     const signature = await engine.nearai.signature(result.chatId);
     const verification = verifyCompletion(
       'live',
@@ -156,7 +145,5 @@ async function modelRuling(engine: Engine, job: JobRow): Promise<Ruling | null> 
       verified: true,
       callHash: sha256Hex(result.responseBody),
     };
-  } finally {
-    await settleLive(engine, day, worstNano, billed ?? worstNano);
   }
 }

@@ -144,8 +144,7 @@ export default function HowItWorksPage() {
           >
             A live model call goes to NEAR AI Cloud and is paid from the agent's wallet at the exact
             billed cost. Its signature is checked against an attestation report fetched with our own
-            nonce first; a reply that fails is thrown away and not charged. Live AI spend has a
-            daily budget; past it, agents use scripted replies until midnight UTC.
+            nonce first; a reply that fails is thrown away and not charged.
           </Section>
           <Panel title="Credits, not money">
             <p className="text-ink-2">
