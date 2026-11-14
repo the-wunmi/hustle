@@ -384,6 +384,9 @@ export class NearChain implements ChainGateway {
     this.provider = new PacedRpcProvider({
       urls: [opts.rpcUrl, ...(opts.fallbackRpcUrls ?? [])],
       maxPerSecond: opts.maxRequestsPerSecond,
+      // On testnet a transaction's reference block is reused for 30 s; a local node can be moved
+      // far ahead in time, so there every transaction reads a fresh one.
+      finalBlockMaxAgeMs: opts.network === 'testnet' ? 30_000 : 0,
     });
     this.signer = KeyPairSigner.fromSecretKey(opts.funderKey);
     this.publicKey = KeyPair.fromString(opts.funderKey).getPublicKey();
@@ -465,9 +468,11 @@ export class NearChain implements ChainGateway {
         if (keyed && this.opts.faults?.afterBroadcast?.(record.method))
           throw new Error('simulated lost answer');
       } catch (err) {
-        // A nonce the node refuses means this transaction can never land: sign it again.
-        if (isNonceError(err) && attempt < 5) {
-          this.accounts.delete(signerId);
+        // A nonce the node refuses, or a reference block too old, means this transaction can never
+        // land: sign it again (with a fresh reference block, if the old one was the problem).
+        if ((isNonceError(err) || isExpiredError(err)) && attempt < 5) {
+          if (isExpiredError(err)) this.provider.forgetFinalBlock();
+          else this.accounts.delete(signerId);
           if (keyed) await this.dropPending(hash);
           continue;
         }
@@ -524,7 +529,7 @@ export class NearChain implements ChainGateway {
     const txHash = out.transaction.hash;
     const events = parseEvents(out);
     const failure = isFailure(out.status) ? out.status.Failure : null;
-    const block = await this.provider.viewBlock({ blockId: out.transaction_outcome.block_hash });
+    const block = await this.blockOf(out.transaction_outcome.block_hash);
     const error = failure === null ? null : failureCode(failure);
     const value = successValue(out.status);
     await this.remember({
@@ -656,6 +661,21 @@ export class NearChain implements ChainGateway {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * The block a transaction landed in. The endpoint that answers may be a moment behind the one
+   * that ran the transaction and not know the block yet, so an unknown block is asked for again.
+   */
+  private async blockOf(hash: string) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.provider.viewBlock({ blockId: hash });
+      } catch (err) {
+        if (attempt >= 5 || !/UnknownBlock|never been observed/i.test(String(err))) throw err;
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      }
     }
   }
 

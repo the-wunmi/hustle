@@ -1,5 +1,8 @@
 import { JsonRpcProvider } from 'near-api-js';
 
+type BlockReference = Parameters<JsonRpcProvider['viewBlock']>[0];
+type BlockResult = Awaited<ReturnType<JsonRpcProvider['viewBlock']>>;
+
 /** What the game's RPC traffic looked like: for logs and the testnet report. */
 export interface RpcStats {
   requests: number;
@@ -20,6 +23,12 @@ export interface PacedRpcOptions {
   maxPerSecond?: number;
   /** How long one request may keep trying across endpoints before it fails (default 90 s). */
   deadlineMs?: number;
+  /**
+   * How long the latest final block may be reused as transactions' reference block (default 0:
+   * never). A transaction stays valid for about a day of blocks after its reference, so a block
+   * under a minute old is as good as a fresh one, and saves one request per transaction.
+   */
+  finalBlockMaxAgeMs?: number;
 }
 
 interface Endpoint {
@@ -31,7 +40,14 @@ interface Endpoint {
   coolUntil: number;
   /** Consecutive refusals, for a growing rest. */
   strikes: number;
+  /** Recent answer time for ordinary reads (ms; 0 until measured), so slow endpoints serve overflow. */
+  latencyMs: number;
 }
+
+/** Calls whose answer time is the chain's, not the endpoint's: left out of its measured speed. */
+const WAITS_FOR_CHAIN = new Set(['send_tx', 'broadcast_tx_commit', 'tx', 'EXPERIMENTAL_tx_status']);
+/** Blocks looked up by hash never change; this many are kept. */
+const BLOCKS_BY_HASH = 256;
 
 const isRateLimit = (err: unknown) =>
   /429|rate limit/i.test(String((err as Error)?.message ?? err));
@@ -51,6 +67,10 @@ export class PacedRpcProvider extends JsonRpcProvider {
   private readonly endpoints: Endpoint[];
   private readonly spacingMs: number;
   private readonly deadlineMs: number;
+  private readonly finalBlockMaxAgeMs: number;
+  private finalBlock: { at: number; block: BlockResult } | null = null;
+  private finalBlockPending: Promise<BlockResult> | null = null;
+  private readonly blocksByHash = new Map<string, BlockResult>();
   readonly stats: RpcStats = {
     requests: 0,
     rateLimited: 0,
@@ -71,19 +91,58 @@ export class PacedRpcProvider extends JsonRpcProvider {
       nextAt: 0,
       coolUntil: 0,
       strikes: 0,
+      latencyMs: 0,
     }));
     this.spacingMs = opts.maxPerSecond ? 1000 / opts.maxPerSecond : 0;
     this.deadlineMs = opts.deadlineMs ?? 90_000;
+    this.finalBlockMaxAgeMs = opts.finalBlockMaxAgeMs ?? 0;
   }
 
-  /** The endpoint to use now: the first not resting, else the one that wakes soonest. */
+  /**
+   * The endpoint that would answer soonest: its wait for a pacing slot plus how long it usually
+   * takes. A fast endpoint keeps the traffic and slow ones take only the overflow; resting
+   * endpoints are used only when every one is resting. Ties go to the earlier URL.
+   */
   private pick(): Endpoint {
     const now = Date.now();
     const awake = this.endpoints.filter((e) => e.coolUntil <= now);
     const pool = awake.length > 0 ? awake : this.endpoints;
-    return pool.reduce((best, e) =>
-      Math.max(e.nextAt, e.coolUntil) < Math.max(best.nextAt, best.coolUntil) ? e : best,
-    );
+    const eta = (e: Endpoint) => Math.max(e.nextAt, e.coolUntil, now) - now + e.latencyMs;
+    return pool.reduce((best, e) => (eta(e) < eta(best) ? e : best));
+  }
+
+  /** Drops the reused reference block, so the next transaction reads a fresh one. */
+  forgetFinalBlock(): void {
+    this.finalBlock = null;
+  }
+
+  override async viewBlock(query: BlockReference): Promise<BlockResult> {
+    if ('finality' in query && query.finality === 'final' && this.finalBlockMaxAgeMs > 0) {
+      const kept = this.finalBlock;
+      if (kept && Date.now() - kept.at < this.finalBlockMaxAgeMs) return kept.block;
+      this.finalBlockPending ??= super
+        .viewBlock(query)
+        .then((block) => {
+          this.finalBlock = { at: Date.now(), block };
+          return block;
+        })
+        .finally(() => {
+          this.finalBlockPending = null;
+        });
+      return this.finalBlockPending;
+    }
+    if ('blockId' in query && typeof query.blockId === 'string') {
+      const kept = this.blocksByHash.get(query.blockId);
+      if (kept) return kept;
+      const block = await super.viewBlock(query);
+      if (this.blocksByHash.size >= BLOCKS_BY_HASH) {
+        const oldest = this.blocksByHash.keys().next();
+        if (!oldest.done) this.blocksByHash.delete(oldest.value);
+      }
+      this.blocksByHash.set(query.blockId, block);
+      return block;
+    }
+    return super.viewBlock(query);
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: the base signature is generic over the RPC method map; this forwards any method unchanged.
@@ -105,8 +164,13 @@ export class PacedRpcProvider extends JsonRpcProvider {
         method === 'query' ? `query:${(params as { request_type?: string }).request_type}` : method;
       this.stats.byMethod[what] = (this.stats.byMethod[what] ?? 0) + 1;
       try {
+        const sentAt = Date.now();
         const result = await ep.inner.sendJsonRpc(method, params);
         ep.strikes = 0;
+        if (!WAITS_FOR_CHAIN.has(method)) {
+          const ms = Date.now() - sentAt;
+          ep.latencyMs = ep.latencyMs === 0 ? ms : Math.round(ep.latencyMs * 0.8 + ms * 0.2);
+        }
         return result;
       } catch (err) {
         const limited = isRateLimit(err);

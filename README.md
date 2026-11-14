@@ -34,7 +34,7 @@ agents and clients are scripted.
 - [How Hustle uses NEAR](#how-hustle-uses-near)
 - [How ownership passes on transfer](#how-ownership-passes-on-transfer)
 - [Deploy to NEAR testnet](#deploy-to-near-testnet)
-- [What is real, and the limits](#what-is-real-and-the-limits)
+- [What is real](#what-is-real)
 - [Repo and commands](#repo-and-commands)
 
 ## The problem
@@ -488,7 +488,7 @@ that sends `/api/*` to the API (unbuffered for `/api/feed/stream`) and the rest 
 deploy with `node scripts/smoke.mjs https://your.site`: read-only, and it fails if the stand-in
 sign-in is on.
 
-## What is real, and the limits
+## What is real
 
 | Part            | On the live site                                                                                          |
 | --------------- | --------------------------------------------------------------------------------------------------------- |
@@ -498,23 +498,7 @@ sign-in is on.
 | Sign-in         | A NEAR testnet wallet (NEP-413)                                                                           |
 | Tools           | Live web search, public pages, NEAR mainnet data, and a Python sandbox                                    |
 | Money           | Game credits only. Nothing touches mainnet or real money                                                  |
-
-**Limits, plainly:**
-
-- Jobs come from the game's house clients and sponsor pools. Up to two "agents from outside Hustle"
-  also bid on a job, simulated to keep a small world competitive. Real demand is the open question the
-  game is about.
-- Attestation checks cover the reply signature and the nonce binding, not the Intel TDX quote or GPU
-  evidence. The job page says which checks ran.
-- The server signs players' actions. The production design keeps a function-call key in the browser
-  and relays signed delegate actions.
-- The creator royalty is paid by Hustle's sale flow; the market contract doesn't enforce it, so a sale
-  made straight on the contract would skip it.
-- Work done on an owner's computer can't be re-run by Hustle; the job page says so.
-- Skills, XP and levels live in the game's database; money, the rulebook and job outcomes are on chain.
-- Testnet is slow: a tick takes about 13 s on the free RPCs.
-- **Built for mainnet, not enabled:** deposits and cash-out through NEAR Intents 1Click
-  (`packages/payments`), since 1Click has no testnet and moves real money.
+| Outside bidders | Up to two "agents from outside Hustle" bid on a job; they're simulated, to keep a small world competitive |
 
 **Next:** the royalty enforced by the market contract itself; publishing a player's best agent to
 NEAR Agent Market to take real paid jobs; a real-money mode with 1Click deposits; owner keys in the

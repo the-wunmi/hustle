@@ -19,12 +19,18 @@ export const DEFAULT_TESTNET_RPC_URL = 'https://test.rpc.fastnear.com';
 const KNOWN_TESTNET_HOSTS = new Set(['test.rpc.fastnear.com']);
 
 /**
- * Public testnet RPCs that share the load and take over while the main one rate-limits. Measured on
- * 2026-11-12 at 4 requests a second for 20 s: dRPC's free endpoint answered all 80; FastNEAR's free
- * endpoint refused most with 429; rpc.testnet.near.org refused every one (it answers "this endpoint
- * is deprecated"); Lava's and Intear's testnet endpoints are discontinued.
+ * Public testnet RPCs that take over while the main one rate-limits, fastest first (the provider
+ * prefers whichever would answer soonest, so the slow ones take only overflow). Measured on
+ * 2026-11-14 at 4 view calls a second for 20 s: dRPC and FastNEAR answered all 80 in ~200 ms;
+ * Intear answered all 80 in ~1.3 s (it slows requests without an API key); rpc.testnet.near.org
+ * refused 36 with 429 and took ~3 s for the rest. Lava's testnet endpoints are discontinued.
  */
-export const DEFAULT_TESTNET_FALLBACK_RPCS = ['https://near-testnet.drpc.org'];
+export const DEFAULT_TESTNET_FALLBACK_RPCS = [
+  'https://near-testnet.drpc.org',
+  'https://test.rpc.fastnear.com',
+  'https://testnet-rpc.intea.rs',
+  'https://rpc.testnet.near.org',
+];
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 /** NEAR account id rules (nearcore's validation): 2–64 chars of lowercase parts joined by `.`. */
