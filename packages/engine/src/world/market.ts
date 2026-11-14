@@ -397,14 +397,20 @@ async function lostToOutside(
   }
 }
 
-async function expireJob(engine: Engine, job: JobRow, notify = true): Promise<void> {
+export async function expireJob(engine: Engine, job: JobRow, notify = true): Promise<void> {
   if (job.chainJobId) {
     // Only the client may cancel on the board; house clients are ours to sign for, and in sandbox
     // mode so are players. The refund is reported only once the chain confirms it.
     const state = await chainJobState(engine, job.chainJobId);
     if (state.kind === 'live') {
       try {
-        await engine.chain.cancel(await clientAccount(engine, job), job.chainJobId);
+        const client = await clientAccount(engine, job);
+        // A job awarded on chain that the game still shows as open (the award landed but its
+        // database write didn't) can't be cancelled; once its delivery window has passed, the
+        // client reclaims the escrow instead.
+        if (state.status === 'awarded')
+          await engine.chain.reclaimUndelivered(client, job.chainJobId);
+        else await engine.chain.cancel(client, job.chainJobId);
       } catch (err) {
         engine.log('cancel failed; will retry', { job: job.id, error: String(err) });
         return;

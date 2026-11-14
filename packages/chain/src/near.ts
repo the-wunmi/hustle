@@ -732,8 +732,18 @@ export class NearChain implements ChainGateway {
     if (this.funding.accountLow === 0n) return;
     const floor = maxBig(this.funding.accountLow, oneCall);
     if (amount >= floor) return;
-    // Players: topped up by `accountRefill` whenever they run low.
+    // Players: topped up by `accountRefill` whenever they run low, while the root can afford it.
     const top = minBig(floor + this.funding.accountRefill - amount, this.funding.accountRefill);
+    const root = await this.provider.viewAccount({ accountId: this.ids.root });
+    if (root.amount < top + NEAR) {
+      if (!this.warnedRootLow) {
+        this.warnedRootLow = true;
+        console.warn(
+          JSON.stringify({ message: 'root too low to refill a player account', signer: signerId }),
+        );
+      }
+      return;
+    }
     await this.send(this.ids.root, signerId, [actions.transfer(top)], {
       method: 'transfer',
       args: { amount: top.toString() },
