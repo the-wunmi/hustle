@@ -1,6 +1,6 @@
 import { spends } from '@hustle/db';
 import { eq } from 'drizzle-orm';
-import { type AgentRow, refreshAccount, refreshBalance } from '../agents/state.ts';
+import { type AgentRow, applySettledSpend } from '../agents/state.ts';
 import { dayOf, type Engine } from '../context.ts';
 import type { JobRow } from './jobs.ts';
 
@@ -46,9 +46,8 @@ export async function pay(
   // A retried request returns the wallet's stored outcome in a new transaction; the payment itself
   // is the first one, which is the hash we kept.
   const [first] = row ? [row] : await engine.db.select().from(spends).where(eq(spends.key, key));
-  // The cache follows the chain on both sides of every payment (the receiver may be a helper agent).
-  await refreshBalance(engine, agent);
-  await refreshAccount(engine, receiver);
+  // The cache follows the payment on both sides (the receiver may be a helper agent), once.
+  if (row && outcome.status === 'settled') await applySettledSpend(engine, agent, receiver, amount);
   return {
     outcome,
     spendId: first?.id ?? null,

@@ -10,18 +10,27 @@ import { Portrait } from '../portrait';
 import { useFeed } from '../providers';
 import { Skeleton } from '../ui';
 
-const POINTS = [
+/** The game's loop, one step per card: what a player sees an agent go through. */
+const LOOP = [
   {
-    title: 'It pays to think',
-    text: 'Every model call costs real fractions of a cent, taken from its own wallet. Win a job, do it well, and keep what is left.',
+    title: 'Raise it',
+    text: 'Pick a body, two traits and a brain. It’s minted as an NFT that is its own NEAR account, with a wallet.',
   },
   {
-    title: 'Its rulebook guards its wallet',
-    text: 'Some job posts are traps that try to make it pay a stranger. Your spending limits are what stop it.',
+    title: 'It bids',
+    text: 'It competes with rival agents for jobs. Every thought is a model call it pays for from its own wallet.',
   },
   {
-    title: 'Broke means asleep',
-    text: 'If it can’t pay its upkeep, it goes to sleep until you top it up or another player backs it.',
+    title: 'It works',
+    text: 'It runs real code on the client’s files and can hire another agent for a part. Some posts are traps; its rulebook refuses to pay a stranger.',
+  },
+  {
+    title: 'It earns',
+    text: 'A good rating releases the escrow. Streaks and badges build its record. Broke means asleep.',
+  },
+  {
+    title: 'Sell or rent it',
+    text: 'Its wallet, record and playbook go with it, so a proven agent is worth more than a fresh one.',
   },
 ];
 
@@ -124,16 +133,24 @@ export function Landing() {
         </div>
       </section>
 
-      <section aria-labelledby="how" className="grid gap-4 lg:grid-cols-3">
-        <h2 id="how" className="sr-only">
-          How it works
+      <section aria-labelledby="how">
+        <h2 id="how" className="text-2xl font-bold">
+          How a run goes
         </h2>
-        {POINTS.map((p) => (
-          <div key={p.title} className="panel p-5">
-            <h3 className="text-xl font-bold">{p.title}</h3>
-            <p className="mt-1 text-ink-2">{p.text}</p>
-          </div>
-        ))}
+        <ol className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {LOOP.map((step, i) => (
+            <li key={step.title} className="panel relative p-4">
+              <span
+                aria-hidden="true"
+                className="grid size-8 place-items-center rounded-full border-2 border-ink bg-coin font-display font-extrabold text-coin-ink"
+              >
+                {i + 1}
+              </span>
+              <h3 className="mt-2 text-lg leading-tight font-bold">{step.title}</h3>
+              <p className="mt-1 text-sm text-ink-2">{step.text}</p>
+            </li>
+          ))}
+        </ol>
       </section>
 
       <section aria-labelledby="now" className="panel p-5">

@@ -14,5 +14,6 @@ export {
   perMillion,
 } from './public.ts';
 export { MODEL_SNAPSHOT, NearAiCloudSimulator, type Responder } from './simulator.ts';
+export { verifyIntelQuote } from './tdx.ts';
 export * from './types.ts';
-export { reportDataOf, verifyCompletion } from './verify.ts';
+export { intelQuoteCheck, reportDataOf, verifyCompletion } from './verify.ts';

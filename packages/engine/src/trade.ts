@@ -15,6 +15,7 @@ import {
   type MarketplaceView,
   MicroAmount,
   maxBig,
+  minBig,
   parseInput,
   type Rng,
   type SaleView,
@@ -629,8 +630,10 @@ export async function houseTrading(engine: Engine, rng: Rng): Promise<void> {
     const seller = house.find((h) => h.id === agent?.ownerId && h.accountId === listing.sellerId);
     if (!agent || !seller) continue;
     const value = await fairValue(engine, agent);
-    if (listing.price < value)
-      await listAgent(engine, seller, agent, { price: cents((value * 110n) / 100n) }).catch((err) =>
+    // Capped at the market's highest price, which a very rich agent's worth can pass.
+    const price = minBig(cents((value * 110n) / 100n), MAX_LISTING_PRICE);
+    if (listing.price < price)
+      await listAgent(engine, seller, agent, { price }).catch((err) =>
         engine.log('house repricing failed', { error: String(err) }),
       );
   }

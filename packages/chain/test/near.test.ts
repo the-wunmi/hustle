@@ -148,7 +148,9 @@ if (enabled) {
       await chain.mintCredits(house, 5_000_000n, `mint:${house}`);
       // Spend its NEAR down to almost nothing, as days of job posts would.
       const { amount } = await provider.viewAccount({ accountId: house });
-      const keep = 10n ** 22n;
+      // Left with less than one call's gas: the send is refused, the operator topped up, and the
+      // call signed again.
+      const keep = 3n * 10n ** 21n;
       await new Account(house, provider, KeyPairSigner.fromSecretKey(node.funderKey)).transfer({
         receiverId: chain.ids.root,
         amount: BigInt(amount) - keep,

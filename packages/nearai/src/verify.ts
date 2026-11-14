@@ -1,6 +1,38 @@
 import type { VerificationView } from '@hustle/core';
 import { recoverEip191, sha256Hex } from './crypto.ts';
+import { verifyIntelQuote } from './tdx.ts';
 import type { AttestationReport, ChatResult, ResponseSignature } from './types.ts';
+
+/** Quotes already checked: one pre-fetched report covers many replies, so each is verified once. */
+const intelChecked = new Map<string, ReturnType<typeof verifyIntelQuote>>();
+
+/**
+ * Intel's signatures on a live attestation's TDX quote: the machine's certificate chain to Intel's
+ * root, the quoting enclave's report and the quote signature, and that the signed report data is the
+ * report data the other checks read.
+ */
+export function intelQuoteCheck(intelQuote: string, reportData: string) {
+  let intel = intelChecked.get(intelQuote);
+  if (!intel) {
+    intel = verifyIntelQuote(intelQuote);
+    if (intelChecked.size >= 32) intelChecked.clear();
+    intelChecked.set(intelQuote, intel);
+  }
+  const failed = intel.checks.filter((c) => !c.ok);
+  return {
+    name: "Intel signed the quote: the machine's certificate chain leads to Intel's root, and Intel's quoting enclave vouches for the key that signed it",
+    ok: intel.ok && intel.reportData === reportData,
+    detail: intel.ok
+      ? intel.reportData === reportData
+        ? 'TDX quote v4, ECDSA P-256'
+        : 'the signed report data differs'
+      : failed.map((c) => c.detail ?? c.label).join('; '),
+  };
+}
+
+const LIVE_NOT_CHECKED = "TCB status and revocation against Intel's PCS collateral";
+const SIMULATED_NOT_CHECKED =
+  'Intel TDX quote against Intel collateral (needs a DCAP verifier). Until that runs, the report fields above are what the provider says, not proven by hardware';
 
 /**
  * The report data a TDX quote carries (64 bytes): a quote v4 is a 48-byte header and a 584-byte TD
@@ -23,7 +55,10 @@ export function verifyCompletion(
   signature: ResponseSignature,
   report: AttestationReport,
   nonce: string,
+  /** Verify Intel's signatures on the quote: only for a report that came from NEAR AI Cloud itself. */
+  opts: { intelQuote?: boolean } = {},
 ): VerificationView {
+  const intel = mode === 'live' && opts.intelQuote !== false;
   const checks: VerificationView['checks'] = [];
   // Two kinds, both seen live on 2026-11-12: `provider_tee` (the model's own enclave key signs
   // `model:sha256(req):sha256(resp)`) and `gateway` (NEAR AI's gateway enclave signs
@@ -69,13 +104,14 @@ export function verifyCompletion(
     ok: addr.length > 0 && reportData.slice(0, 40) === addr,
     detail: 'report_data[0:20] = signing address',
   });
+  if (intel && att) checks.push(intelQuoteCheck(att.intel_quote, reportData));
 
   return {
     mode,
     passed: checks.every((c) => c.ok),
     checks,
     notChecked: [
-      'Intel TDX quote against Intel collateral (needs a DCAP verifier). Until that runs, the report fields above are what the provider says, not proven by hardware',
+      intel ? LIVE_NOT_CHECKED : SIMULATED_NOT_CHECKED,
       'Event log replay against RTMR3 and the app-compose measurement',
       'NVIDIA GPU evidence',
       ...(gateway

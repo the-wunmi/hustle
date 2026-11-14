@@ -133,6 +133,7 @@ async function modelRuling(engine: Engine, job: JobRow): Promise<Ruling | null> 
       signature,
       attestation.report,
       attestation.nonce,
+      { intelQuote: engine.modes.inference === 'live' },
     );
     if (!verification.passed) return null;
     const parsed = JudgeOutput.safeParse(JSON.parse(result.content ?? ''));

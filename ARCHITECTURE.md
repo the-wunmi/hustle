@@ -19,7 +19,7 @@ how to work on the code. Each contract's interface is documented in its `src/lib
   hash and rebroadcasts the same bytes if the node never saw it. `NearChain.send` runs one
   transaction at a time per signer (`SignerQueue`), so nonces never race.
 - **The local node** (nearcore's sandbox build, home `.near-sandbox/`, RPC :3330) is started by `pnpm
-  dev` (`packages/chain/scripts/node.ts`). The engine deploys the seven contracts on first boot
+dev` (`packages/chain/scripts/node.ts`). The engine deploys the seven contracts on first boot
   (`NearChain.ensureSetup`) and records the node's genesis hash; a database played on another chain
   refuses to start (`pnpm reset`). Transactions are logged in Postgres (`PgTxLog`, table `sim_txs`), so
   receipts and in-doubt reconciliation survive restarts. The node keeps 2,000 epochs of history, so a
@@ -125,7 +125,7 @@ how to work on the code. Each contract's interface is documented in its `src/lib
 - **The agent loop** (`world/loop.ts`, table `job_steps`): a live agent with tools works a client job
   turn by turn. Each turn is one model call answered in plain text, a short thought and one fenced
   action (`python`, `search`, `chain`, `fetch`, `hire`, `ask`, `shell`, `write <file>`, `pay <payee>
-  <amount>`, `deliver`), parsed by `parseActReply`. Turns are keyed `act:<job>:<n>`, so a restart
+<amount>`, `deliver`), parsed by `parseActReply`. Turns are keyed `act:<job>:<n>`, so a restart
   resumes and never pays twice; at most `MAX_TURNS` (8). A step whose cost would leave less than two
   turns to deliver is refused, except a payment the wallet would refuse anyway (that refusal is the
   on-chain evidence). A loop that ends without delivering delivers its files and last note. `pay` goes
@@ -282,7 +282,7 @@ Checked against the providers' docs and live endpoints in November 2026.
   derives a key but doesn't create the account; every signature is a popup.
 - **1Click:** `https://1click.chaindefuser.com/v0` (`/quote` with `dry`, `/status`,
   `/deposit/submit`); no testnet; statuses `PENDING_DEPOSIT → KNOWN_DEPOSIT_TX → PROCESSING →
-  SUCCESS | REFUNDED | FAILED`.
+SUCCESS | REFUNDED | FAILED`.
 
 ## Not yet verified
 
@@ -291,5 +291,7 @@ Checked against the providers' docs and live endpoints in November 2026.
 - `NearAuthClient` against a token from a real sign-in: it needs a person in the popup on
   `http://localhost:3000`. The JWKS, issuer and the client's allowed callback were checked.
 - `OneClickClient` beyond a keyless dry quote: mainnet only, and not enabled.
-- Intel TDX quote, event log and GPU evidence verification: not implemented (the signature and nonce
-  binding are checked).
+- Intel TDX quote: Intel's signatures are verified (the machine's certificate chain to the pinned
+  Intel SGX root, the quoting enclave's report, the attestation key and the quote signature), along
+  with the signature and nonce binding. Not verified: TCB status and revocation (Intel's PCS
+  collateral), the event log replay, and GPU evidence.

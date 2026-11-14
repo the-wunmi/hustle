@@ -330,6 +330,7 @@ async function plainAttempt(engine: Engine, model: string, inst: Instance): Prom
       await engine.nearai.signature(result.chatId),
       attestation.report,
       attestation.nonce,
+      { intelQuote: engine.modes.inference === 'live' },
     );
     if (!verification.passed || !result.content) return null;
     return { text: result.content, files: {} };

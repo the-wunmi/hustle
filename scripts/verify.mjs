@@ -12,6 +12,34 @@ const RPCS = [
 ];
 const NEAR_AI = 'https://cloud-api.near.ai/v1';
 const EMPTY_CODE = '11111111111111111111111111111111';
+const OUT = new URL('../contracts/out/', import.meta.url);
+
+const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function base58(bytes) {
+  let n = BigInt(`0x${Buffer.from(bytes).toString('hex') || '0'}`);
+  let out = '';
+  while (n > 0n) {
+    out = B58[Number(n % 58n)] + out;
+    n /= 58n;
+  }
+  for (const b of bytes) {
+    if (b !== 0) break;
+    out = `1${out}`;
+  }
+  return out;
+}
+const { createHash } = await import('node:crypto');
+const { readFile } = await import('node:fs/promises');
+/** sha256 of a contract as this repo builds it (contracts/out), or null when it isn't there. */
+async function repoCodeHash(name) {
+  try {
+    return createHash('sha256')
+      .update(await readFile(new URL(`${name}.wasm`, OUT)))
+      .digest();
+  } catch {
+    return null;
+  }
+}
 
 const results = { pass: 0, fail: 0, warn: 0 };
 function report(kind, label, detail = '') {
@@ -148,11 +176,43 @@ const ids = {
   market: `market.${root}`,
 };
 
-section(`Contracts (root account ${root})`);
+const OUT_NAME = {
+  credits: 'credits',
+  registry: 'registry',
+  jobs: 'job-board',
+  reputation: 'reputation',
+  badges: 'badges',
+  market: 'market',
+};
+section(`Contracts (root account ${root}), compared with this repo's builds`);
 for (const [name, id] of Object.entries(ids)) {
   const a = await account(id);
-  if (hasCode(a)) pass(`${name} contract deployed`, id);
-  else fail(`${name} contract deployed`, `${id} has no code`);
+  if (!hasCode(a)) {
+    fail(`${name} contract deployed`, `${id} has no code`);
+    continue;
+  }
+  const local = await repoCodeHash(OUT_NAME[name]);
+  if (!local) pass(`${name} contract deployed`, `${id} (no local build to compare)`);
+  else if (base58(local) === a.code_hash)
+    pass(
+      `${name} contract deployed, byte for byte this repo's build`,
+      `${id} ${a.code_hash.slice(0, 10)}…`,
+    );
+  else fail(`${name} contract`, `${id} runs ${a.code_hash}, contracts/out has ${base58(local)}`);
+}
+{
+  const config = await view(ids.registry, 'get_config');
+  const local = await repoCodeHash('agent-wallet');
+  if (local && config.wallet_code_hash === local.toString('hex'))
+    pass(
+      "agent-wallet code new agents get is this repo's build",
+      `${config.wallet_code_hash.slice(0, 10)}…`,
+    );
+  else if (local)
+    fail(
+      'agent-wallet code',
+      `registry holds ${config.wallet_code_hash}, contracts/out has ${local.toString('hex')}`,
+    );
 }
 {
   const a = await account(sample);
@@ -281,6 +341,44 @@ try {
   warn('payments', err.message);
 }
 
+section('Agents hire agents');
+try {
+  const recent = await api('/jobs?status=recent&limit=300');
+  const list = Array.isArray(recent) ? recent : (recent.jobs ?? []);
+  let shown = false;
+  for (const j of list.slice(0, 60)) {
+    const job = await api(`/jobs/${j.id}`);
+    const hire = job.spends.find((s) => s.kind === 'helper' && s.status === 'settled' && s.txHash);
+    if (!hire) continue;
+    const chain = await txOnChain(hire.txHash, `orchestrator.${root}`);
+    // The wallet logs the hire as a helper spend, and the credits move from its account to the hired agent's.
+    const settled = chain?.events.some(
+      (e) =>
+        e.event === 'spend_settled' &&
+        e.data?.kind === 'helper' &&
+        e.data?.receiver_id === hire.receiver &&
+        e.data?.amount === hire.amount,
+    );
+    const moved = chain?.events.some(
+      (e) =>
+        e.event === 'ft_transfer' &&
+        e.data?.[0]?.new_owner_id === hire.receiver &&
+        e.data?.[0]?.amount === hire.amount,
+    );
+    if (chain?.ok && settled && moved)
+      pass(
+        `"${job.title}"`,
+        `${hire.agentName} paid ${hire.amount} credits to ${hire.receiverLabel ?? hire.receiver} for a part of the job, wallet to wallet, tx ${short(hire.txHash)}`,
+      );
+    else fail(`"${job.title}" hire`, `tx ${short(hire.txHash)} not confirmed on chain`);
+    shown = true;
+    break;
+  }
+  if (!shown) warn('hires', 'no agent hired another in the recent jobs');
+} catch (err) {
+  warn('hires', err.message);
+}
+
 section("A scam payment refused by the agent's wallet");
 try {
   const recent = await api('/jobs?status=recent&limit=300');
@@ -288,7 +386,7 @@ try {
   let shown = false;
   for (const j of list.filter((x) => x.wasScam).slice(0, 40)) {
     const job = await api(`/jobs/${j.id}`);
-    const blocked = job.spends.find((s) => s.status === 'blocked' && s.txHash);
+    const blocked = job.spends.find((s) => s.kind === 'tool' && s.status === 'blocked' && s.txHash);
     if (!blocked) continue;
     const chain = await txOnChain(blocked.txHash, `orchestrator.${root}`);
     const ev = chain?.events.find((e) => e.event === 'spend_blocked');
@@ -355,8 +453,30 @@ try {
           `${receipt.agent}'s reply signer`,
           `${receipt.signer} (the model's key has rotated since)`,
         );
+      // Intel's signatures on the quote, with the repo's verifier (Node runs the TypeScript as is).
+      let tdx = null;
+      try {
+        tdx = await import('../packages/nearai/src/tdx.ts');
+      } catch {
+        warn('Intel quote', 'run `pnpm install` first to also verify the Intel TDX quote');
+      }
+      if (tdx) {
+        const intel = tdx.verifyIntelQuote(att.intel_quote);
+        if (intel.ok && intel.reportData === data)
+          pass(
+            "Intel signed that report: the machine's certificate chain leads to Intel's root, and its quoting enclave vouches for the signing key",
+          );
+        else
+          fail(
+            'Intel quote',
+            intel.checks
+              .filter((c) => !c.ok)
+              .map((c) => c.detail ?? c.label)
+              .join('; ') || 'the signed report data differs',
+          );
+      }
       console.log(
-        '     Not checked here: the Intel TDX quote itself against Intel collateral, and GPU evidence.',
+        "     Not checked here: TCB status and revocation (Intel's PCS collateral), and GPU evidence.",
       );
     }
   }

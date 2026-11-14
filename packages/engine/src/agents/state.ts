@@ -1,7 +1,7 @@
 import type { AgentLook, Category, Rulebook, Strategy, Tier, Trait } from '@hustle/core';
 import { agents, type Tx } from '@hustle/db';
 import { type AgentSnapshot, levelForXp } from '@hustle/economy';
-import { eq, isNotNull } from 'drizzle-orm';
+import { eq, isNotNull, sql } from 'drizzle-orm';
 import type { Engine } from '../context.ts';
 
 export type AgentRow = typeof agents.$inferSelect;
@@ -94,6 +94,28 @@ export async function refreshBalance(
 export async function loadAgent(engine: Engine, id: string): Promise<AgentRow | null> {
   const [row] = await engine.db.select().from(agents).where(eq(agents.id, id));
   return row ?? null;
+}
+
+/**
+ * Moves a settled payment through the balance cache without reading the chain: the payer down and,
+ * when the receiver is an agent, the receiver up, by the exact amount the wallet sent. Called once
+ * per payment (on its first record); the periodic refresh re-reads every balance from the chain, and
+ * the wallet contract itself refuses anything the real balance can't cover.
+ */
+export async function applySettledSpend(
+  engine: Engine,
+  agent: AgentRow,
+  receiver: string,
+  amount: bigint,
+): Promise<void> {
+  await engine.db
+    .update(agents)
+    .set({ balance: sql`${agents.balance} - ${amount}` })
+    .where(eq(agents.id, agent.id));
+  await engine.db
+    .update(agents)
+    .set({ balance: sql`${agents.balance} + ${amount}` })
+    .where(eq(agents.accountId, receiver));
 }
 
 /** Refreshes the cached balance of whichever agent owns `accountId`, if any (e.g. a paid helper). */

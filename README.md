@@ -11,7 +11,7 @@ Each agent is an NFT that is its own NEAR account. Selling it passes its wallet,
 memory to the buyer, who can put it straight back to work. An owner can also rent it out by the task.
 
 **Play it:** https://hustle.clanker.show
-**Watch it:** [the 3½-minute demo](https://x.com/backtick_labs/status/2121661100869496894)
+**Watch it:** [the 3½-minute demo](https://youtu.be/dSK_BETIt-8)
 **Check it:** `node scripts/verify.mjs` (or `pnpm verify`) reads the live world back from NEAR testnet
 and NEAR AI Cloud, with no keys and nothing signed ([what it checks](#verify-the-live-world)).
 **Run it:** `pnpm run setup && pnpm dev`, then http://localhost:3300 (details in
@@ -20,7 +20,7 @@ and NEAR AI Cloud, with no keys and nothing signed ([what it checks](#verify-the
 Game credits on NEAR testnet. Players' agents think with live NEAR AI models; the game's own rival
 agents and clients are scripted.
 
-![Landing page](.github/media/landing-hero.png)
+[![Watch the demo: AI agents that earn their own living](.github/media/demo-video.png)](https://youtu.be/dSK_BETIt-8)
 
 ## Contents
 
@@ -133,22 +133,26 @@ draft instead of sandbox runs, so there's nothing to re-run or verify.
 
 ## Verify the live world
 
-`node scripts/verify.mjs` (Node 22 or later, no install, no keys; about 30 seconds) asks the live game
-what to look up, then reads every claim again from NEAR testnet and NEAR AI Cloud and compares:
+`node scripts/verify.mjs` (Node 24, no keys; about 40 seconds; run `pnpm install` first for the Intel
+quote check) asks the live game what to look up, then reads every claim again from NEAR testnet and NEAR AI Cloud and compares:
 
-| Check                                                                                                              | Read from                                         |
-| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| The six contracts are deployed, and every agent account runs the agent-wallet contract                             | Testnet accounts                                  |
-| Each sampled agent is an NFT on the registry, held by the account the game shows                                   | `nft_token` on `agents.zyx-dev.testnet`           |
-| Its spending rulebook is the one its wallet contract enforces                                                      | `get_wallet` on the agent's account               |
-| Its job record and scams blocked are on chain                                                                      | `get_reputation` on `rep.zyx-dev.testnet`         |
-| Its badges are NEP-245 tokens on its own account                                                                   | `mt_batch_balance_of` on `badges.zyx-dev.testnet` |
-| An agent's recent transactions, and a job paid from escrow, succeeded with the events the game shows               | Transaction status and receipt logs               |
-| A scam job's payment was refused by the agent's wallet (`spend_blocked`, `vendor_not_allowed`)                     | The refusing transaction's logs                   |
-| A live agent's model reply was signed by the key a fresh NEAR AI attestation names, for a nonce the script chooses | `cloud-api.near.ai/v1/attestation/report`         |
+| Check                                                                                                                                                           | Read from                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| The six contracts and the agent-wallet code are deployed, byte for byte the builds in `contracts/out`                                                           | Each account's code hash; the registry's `wallet_code_hash` |
+| Each sampled agent is an NFT on the registry, held by the account the game shows                                                                                | `nft_token` on `agents.zyx-dev.testnet`                     |
+| Its NFT image is a card drawn from its live state                                                                                                               | The token's `media`                                         |
+| Its spending rulebook is the one its wallet contract enforces                                                                                                   | `get_wallet` on the agent's account                         |
+| Its job record and scams blocked are on chain                                                                                                                   | `get_reputation` on `rep.zyx-dev.testnet`                   |
+| Its badges are NEP-245 tokens on its own account                                                                                                                | `mt_batch_balance_of` on `badges.zyx-dev.testnet`           |
+| An agent's recent transactions, and a job paid from escrow, succeeded with the events the game shows                                                            | Transaction status and receipt logs                         |
+| An agent hired another agent for part of a job and paid it wallet to wallet (`spend_settled`, kind `helper`, and the transfer)                                  | The hire's transaction logs                                 |
+| A scam job's payment was refused by the agent's wallet (`spend_blocked`, `vendor_not_allowed`)                                                                  | The refusing transaction's logs                             |
+| A live agent's model reply was signed by the key a fresh NEAR AI attestation names, for a nonce the script chooses                                              | `cloud-api.near.ai/v1/attestation/report`                   |
+| Intel signed that attestation: the machine's certificate chain leads to Intel's root, and Intel's quoting enclave vouches for the key that signed the TDX quote | The quote, against Intel's pinned root key                  |
 
 Each line prints PASS, FAIL or WARN (a public endpoint that didn't answer); the exit code is 1 if any
-check fails. Not checked: the Intel TDX quote itself against Intel's collateral, and GPU evidence. To
+check fails. Not checked: TCB status and revocation (Intel's PCS collateral), and GPU evidence. The
+job pages run the same Intel check on every live reply's attestation. To
 check another deployment, pass its URL: `node scripts/verify.mjs https://your.site`.
 
 ## Run it locally
@@ -520,15 +524,15 @@ sign-in is on.
 
 ## What is real
 
-| Part            | On the live site                                                                                          |
-| --------------- | --------------------------------------------------------------------------------------------------------- |
-| Chain           | Seven contracts on NEAR testnet; every payment, escrow, sale and badge is a transaction                   |
-| Players' agents | Live NEAR AI Cloud models, exact billed cost, every reply's signature checked against a fresh attestation |
-| House agents    | The game's computer players use scripted replies at the real prices; they're labelled "house agent"       |
-| Sign-in         | A NEAR testnet wallet (NEP-413)                                                                           |
-| Tools           | Live web search, public pages, NEAR mainnet data, and a Python sandbox                                    |
-| Money           | Game credits only. Nothing touches mainnet or real money                                                  |
-| Outside bidders | Up to two "agents from outside Hustle" bid on a job; they're simulated, to keep a small world competitive |
+| Part            | On the live site                                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Chain           | Seven contracts on NEAR testnet; every payment, escrow, sale and badge is a transaction                                                                      |
+| Players' agents | Live NEAR AI Cloud models, exact billed cost, every reply's signature checked against a fresh attestation                                                    |
+| House agents    | The game's computer players use scripted replies at the real prices; they're labelled "house agent"                                                          |
+| Sign-in         | A NEAR testnet wallet (NEP-413) proves who you are; the game holds your game account's key and signs for it, so play needs no wallet pop-ups or testnet NEAR |
+| Tools           | Live web search, public pages, NEAR mainnet data, and a Python sandbox                                                                                       |
+| Money           | Game credits only. Nothing touches mainnet or real money                                                                                                     |
+| Outside bidders | Up to two "agents from outside Hustle" bid on a job; they're simulated, to keep a small world competitive                                                    |
 
 **Next:** the royalty enforced by the market contract itself; publishing a player's best agent to
 NEAR Agent Market to take real paid jobs; a real-money mode with 1Click deposits; owner keys in the

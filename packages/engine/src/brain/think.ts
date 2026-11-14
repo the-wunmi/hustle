@@ -12,7 +12,7 @@ import {
 } from '@hustle/nearai';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { type AgentRow, refreshBalance, rulebookOf, tierOf } from '../agents/state.ts';
+import { type AgentRow, applySettledSpend, rulebookOf, tierOf } from '../agents/state.ts';
 import { dayOf, type Engine } from '../context.ts';
 import { book, chainKey, post } from '../record.ts';
 import {
@@ -283,6 +283,7 @@ export async function think<P extends Purpose>(
     signature,
     attestation.report,
     attestation.nonce,
+    { intelQuote: engine.modes.inference === 'live' },
   );
   const callFields = {
     inferenceId: result.inferenceId,
@@ -326,7 +327,7 @@ export async function think<P extends Purpose>(
     memo: `${ctx.purpose} ${brain.model}`.slice(0, 120),
     receipt,
   });
-  await engine.db
+  const [recorded] = await engine.db
     .insert(spends)
     .values({
       key: spendKey,
@@ -344,7 +345,8 @@ export async function think<P extends Purpose>(
       day: dayOf(engine),
       tick: engine.clock.tick,
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: spends.id });
 
   const parsed = tools
     ? (OUTPUT[ctx.purpose].safeParse({
@@ -364,7 +366,9 @@ export async function think<P extends Purpose>(
       spendKey,
     })
     .where(eq(inferenceCalls.id, row.id));
-  await refreshBalance(engine, agent);
+  // The cache follows the payment once, on its first record.
+  if (recorded && outcome.status === 'settled')
+    await applySettledSpend(engine, agent, engine.chain.ids.treasury, cost);
 
   if (outcome.status !== 'settled') {
     // The wallet refused to pay: the work is discarded, so an agent never uses thinking it didn't pay for.

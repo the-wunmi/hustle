@@ -160,8 +160,13 @@ export class PacedRpcProvider extends JsonRpcProvider {
       tries++;
       this.stats.requests++;
       this.stats.byUrl[ep.url] = (this.stats.byUrl[ep.url] ?? 0) + 1;
+      const q = params as { request_type?: string; method_name?: string };
       const what =
-        method === 'query' ? `query:${(params as { request_type?: string }).request_type}` : method;
+        method !== 'query'
+          ? method
+          : q.request_type === 'call_function'
+            ? `view:${q.method_name}`
+            : `query:${q.request_type}`;
       this.stats.byMethod[what] = (this.stats.byMethod[what] ?? 0) + 1;
       try {
         const sentAt = Date.now();

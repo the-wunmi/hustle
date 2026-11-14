@@ -50,6 +50,8 @@ const GAS_LOCAL = 30n * TGAS;
 /** A call that starts a transfer or another contract's method and waits for its callback. */
 const GAS_CROSS = 150n * TGAS;
 /** The protocol's per-transaction ceiling: minting deploys a wallet and runs two callbacks. */
+/** How long a signer's NEAR reading stands in for a fresh one before sends. */
+const SIGNER_FUNDS_TTL_MS = 120_000;
 const GAS_MAX = 300n * TGAS;
 
 const ONE_YOCTO = 1n;
@@ -470,6 +472,15 @@ export class NearChain implements ChainGateway {
       } catch (err) {
         // A nonce the node refuses, or a reference block too old, means this transaction can never
         // land: sign it again (with a fresh reference block, if the old one was the problem).
+        // A signer drained by something other than our own sends (whose cost the refill check
+        // already counts) is refused before anything runs: top it up from a fresh reading and sign
+        // again.
+        if (isBalanceError(err) && attempt < 2) {
+          this.signerFunds.delete(signerId);
+          await this.refillSigner(signerId);
+          if (keyed) await this.dropPending(hash);
+          continue;
+        }
         if ((isNonceError(err) || isExpiredError(err)) && attempt < 5) {
           if (isExpiredError(err)) this.provider.forgetFinalBlock();
           else this.accounts.delete(signerId);
@@ -715,21 +726,34 @@ export class NearChain implements ChainGateway {
    * sparingly (testnet: they start with very little, so NEAR goes only to accounts that play), the
    * game's own signers and the operator to a working balance.
    */
+  /** Each signer's last NEAR reading, less a full-gas call per send since (see `refillSigner`). */
+  private readonly signerFunds = new Map<string, { amount: bigint; at: number }>();
+
   private async refillSigner(signerId: string): Promise<void> {
     if (this.funding.accountLow === 0n && this.funding.houseLow === 0n) return;
     if (signerId === this.ids.root || signerId === this.funderId) return;
     if (!signerId.endsWith(`.${this.ids.root}`)) return;
-    const { amount } = await this.provider.viewAccount({ accountId: signerId });
     // Whatever the floor, a signer must cover one full-gas call at today's gas price.
     const oneCall = (await this.gasPrice()) * GAS_MAX + NEAR / 100n;
-    if (!isPlayerAccount(signerId)) {
+    const house = !isPlayerAccount(signerId);
+    const operator = signerId === this.ids.operator;
+    if (!house && this.funding.accountLow === 0n) return;
+    const floor = house
+      ? maxBig(operator ? this.funding.operatorLow : this.funding.houseLow, 2n * oneCall)
+      : maxBig(this.funding.accountLow, oneCall);
+    // A recent reading, less a full-gas call for every send since, stands in for a fresh one while
+    // it stays above the floor: a signer can't run dry between readings, and most sends skip it.
+    const known = this.signerFunds.get(signerId);
+    if (known && Date.now() - known.at < SIGNER_FUNDS_TTL_MS && known.amount - oneCall >= floor) {
+      known.amount -= oneCall;
+      return;
+    }
+    const { amount } = await this.provider.viewAccount({ accountId: signerId });
+    this.signerFunds.set(signerId, { amount: amount - oneCall, at: Date.now() });
+    if (house) {
       // The game's own signers and the operator: kept topped up, no daily cap.
-      const operator = signerId === this.ids.operator;
-      const floor = maxBig(
-        operator ? this.funding.operatorLow : this.funding.houseLow,
-        2n * oneCall,
-      );
       if (amount >= floor) return;
+      this.signerFunds.delete(signerId);
       const target = operator ? this.funding.operatorTarget : this.funding.houseTarget;
       const top = maxBig(target, floor + oneCall) - amount;
       const root = await this.provider.viewAccount({ accountId: this.ids.root });
@@ -749,9 +773,8 @@ export class NearChain implements ChainGateway {
       });
       return;
     }
-    if (this.funding.accountLow === 0n) return;
-    const floor = maxBig(this.funding.accountLow, oneCall);
     if (amount >= floor) return;
+    this.signerFunds.delete(signerId);
     // Players: topped up by `accountRefill` whenever they run low, while the root can afford it.
     const top = minBig(floor + this.funding.accountRefill - amount, this.funding.accountRefill);
     const root = await this.provider.viewAccount({ accountId: this.ids.root });
@@ -1784,6 +1807,11 @@ const errorText = (err: unknown): string =>
 
 function isNonceError(err: unknown): boolean {
   return /InvalidNonce|nonce/i.test(errorText(err));
+}
+
+/** The node refused the transaction because the signer can't cover it: nothing ran. */
+function isBalanceError(err: unknown): boolean {
+  return /NotEnoughBalance|LackBalanceForState|not enough balance/i.test(errorText(err));
 }
 
 function isExpiredError(err: unknown): boolean {

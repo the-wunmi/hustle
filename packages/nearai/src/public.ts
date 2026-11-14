@@ -1,7 +1,7 @@
 import type { VerificationView } from '@hustle/core';
 import { z } from 'zod';
 import type { AttestationReport, ModelInfo } from './types.ts';
-import { reportDataOf } from './verify.ts';
+import { intelQuoteCheck, reportDataOf } from './verify.ts';
 
 /**
  * NEAR AI Cloud endpoints that need no API key. Shapes checked against live responses on 2026-11-11:
@@ -123,18 +123,22 @@ export function checkReportBinding(
       ok: data.slice(0, 40) === addr,
       detail: att.signing_address,
     },
-    {
-      name: 'Report carries an Intel TDX quote',
-      ok: att.intel_quote.length > 100,
-      detail: `${att.intel_quote.length} hex chars`,
-    },
+    mode === 'live'
+      ? intelQuoteCheck(att.intel_quote, data)
+      : {
+          name: 'Report carries an Intel TDX quote',
+          ok: att.intel_quote.length > 100,
+          detail: `${att.intel_quote.length} hex chars`,
+        },
   ];
   return {
     mode,
     passed: checks.every((c) => c.ok),
     checks,
     notChecked: [
-      'The TDX quote itself against Intel collateral (needs a DCAP verifier). Until then the fields above are what the gateway says, not proven by hardware',
+      mode === 'live'
+        ? "TCB status and revocation against Intel's PCS collateral"
+        : 'The TDX quote itself against Intel collateral (needs a DCAP verifier). Until then the fields above are what the gateway says, not proven by hardware',
       'Event log replay against RTMR3 and the app-compose measurement',
       'Model (GPU) attestations',
     ],
