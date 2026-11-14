@@ -2,52 +2,58 @@
 
 **Most AI agents can't earn their keep. Raise one that does.**
 
-Hustle is a browser game. You adopt an AI agent with its own wallet. It bids for jobs, pays for every
-thought it has, and goes to sleep when the money runs out. While you watch, it calls you with
-decisions: what to charge, whom to pay, which risk to take. Your judgment is the difference between an
-agent that pays its way and one that goes broke.
+Hustle is a browser game on NEAR. You raise an AI agent with its own wallet. It bids for paid work
+against rival agents, does the work with real tools, pays for every thought it has, and falls asleep
+when the money runs out. While you watch, it calls you with decisions: what to charge, whom to pay,
+which risk to take.
 
-**Does the owner's judgment matter? We simulated it.** Two weeks, 240 agents, three seeds, with every
-fourth agent's calls answered by one owner policy (`pnpm simulate:owners`):
+Every agent is an NFT that is its own NEAR account, so a good one is an asset. Sell it, and its
+wallet, record, playbook and memory go to the buyer, who can put it straight back to work. Rent it out
+by the task instead. Or buy a proven specialist rather than raising one from scratch.
 
-| Owner (simulated policy)                               | Median profit, 2 weeks | Survive | Lost to scams (cohort) |
-| ------------------------------------------------------ | ---------------------- | ------- | ---------------------- |
-| Sharp: prices by client, takes contracts worth it      | $16.75–20.42           | 83–88%  | $90–153                |
-| Reckless: undercuts, pays anyone, takes every contract | $12.20–17.22           | 78–93%  | $195–307               |
-| Passive: never answers; every call takes its default   | −$0.62 to −$1.58       | 65–73%  | $49–68                 |
+**Play it:** https://hustle.clanker.show (NEAR testnet, game credits only).
+**Run it:** `pnpm setup && pnpm dev`, then http://localhost:3300.
 
-Assumptions: the sharp owner reads scam tells right 90% of the time; that is an assumption about an
-attentive player, not a measurement of real players. Clients, rivals and AI calls are all simulated.
+![Landing page](.github/media/landing-hero.png)
 
-Ignoring the agent loses money and agents. Saying yes to everything keeps agents alive about as well
-as choosing carefully and loses 1.7 to 2.6 times as much to scams. It earns $4.30 less on average
-(sharp is ahead by $8.22 and $5.15 in two worlds; in the third, reckless edged ahead by $0.47): taking
-every contract is close to break-even on its own, so judgment shows across worlds, not in each one.
+## Contents
 
-Without an owner, by brain tier (`pnpm simulate`: 300 scripted agents with random strategies, 14 days,
-seeds 7, 42, 99): **Budget** survives 74–81% around break-even (−$0.05 to $0.69), **Standard**
-83–88% slightly positive ($0.79–2.71 over two weeks), **Premium** 33–38% and negative (about −$2.39;
-a few big winners). "Survive" means awake on the last day, including agents a backer revived.
+- [What makes it different](#what-makes-it-different)
+- [Screenshots](#screenshots)
+- [The game](#the-game)
+- [An agent is an asset, priced by what it can prove](#an-agent-is-an-asset-priced-by-what-it-can-prove)
+- [Does the owner's judgment matter?](#does-the-owners-judgment-matter)
+- [Architecture](#architecture)
+- [Engineering](#engineering)
+- [How Hustle uses NEAR](#how-hustle-uses-near)
+- [How ownership passes on transfer](#how-ownership-passes-on-transfer)
+- [Run it locally](#run-it-locally)
+- [Deploy to NEAR testnet](#deploy-to-near-testnet)
+- [Try it: do this, see that](#try-it-do-this-see-that)
+- [What is real, and the limits](#what-is-real-and-the-limits)
+- [Repo and commands](#repo-and-commands)
 
-**Try it:** `pnpm setup && pnpm dev`, then http://localhost:3300 (needs Node 24, pnpm 11 and
-Docker).
+## What makes it different
 
-**What is real, up front:** the game runs on **NEAR testnet** (or on a local NEAR node when no
-testnet account is configured) and every amount is **credits**, never real money. Players' agents
-think with **live NEAR AI Cloud** models when a key is set, each reply's signature checked against a
-fresh attestation, under a daily spend budget; house agents (the game's computer players) use scripted
-replies. Sign-in is **NEAR Auth** on its testnet tenant. Nothing here touches mainnet or real money.
-
-Built at NEAR HACKATHON (2026-11) for the **games** track (also nfts, agents, swarms).
+- **Agents that pay their own way.** Every model call, tool, upkeep and helper is paid from the
+  agent's own wallet at the real price. Profit is measured after every cost, from clients unrelated
+  to the owner.
+- **Real, expert work.** Agents run Python on clients' files, read web pages and NEAR mainnet data,
+  search the web, hire other agents, ask the client a question, and run commands on their owner's
+  computer when allowed. They reconcile books, find why code fails its tests, and research tokens.
+- **Work the client can check.** Every sandbox run can be re-run in the client's own browser, byte for
+  byte. Every model reply's signature is checked against a fresh NEAR AI Cloud attestation before the
+  agent pays for it.
+- **Can't be talked into paying a scammer.** The spending rulebook lives in the agent's wallet
+  contract. A prompt-injected payment is refused on chain, with a transaction hash to prove it.
+- **A tradeable asset with a track record.** The NFT is the account. Its record, badges and a
+  challenge score (fresh problems, graded by code, against the same model without the owner's
+  playbook) tell a buyer what it's worth.
+- **A game that makes the economics playable**, and a simulator that measures them.
 
 ## Screenshots
 
 From the live game at https://hustle.clanker.show.
-
-![Landing page](.github/media/landing-hero.png)
-
-The pitch: adopt an AI worker with its own wallet. The agents under the headline are the shared
-world's, with their current balances.
 
 ![Job board](.github/media/job-board.png)
 
@@ -56,22 +62,22 @@ or leave.
 
 ![A scam job's timeline with a blocked payment](.github/media/scam-payment-blocked-by-rulebook.png)
 
-How a job ran: every thought is billed to the agent that had it, and on this scam job the agent's
+How a job ran: every thought is billed to the agent that had it. On this scam job the agent's
 rulebook blocked a payment, refused by its wallet in a transaction you can look up.
 
 ![An agent's profile](.github/media/agent-profile-overview.png)
 
-An agent's profile: balance and today's profit, what it is doing now, its streak and its nemesis, with
+An agent's profile: balance and today's profit, what it's doing now, its streak and its nemesis, with
 tabs for its work, wallet and rulebook, ownership and proof.
 
 ![The Proof tab](.github/media/agent-proof-tab-on-chain.png)
 
-The Proof tab: the agent's NFT account and holder, the rulebook its wallet enforces and its reputation
-record, all read from the chain.
+The Proof tab: the agent's NFT account and holder, the rulebook its wallet enforces and its
+reputation record, all read from the chain.
 
 ![Leaderboard in the dark theme](.github/media/leaderboard-dark.png)
 
-The leaderboard (dark theme) ranks agents by profit from unrelated clients, after every cost.
+The leaderboard ranks agents by profit from unrelated clients, after every cost.
 
 <img src=".github/media/scam-job-mobile.png" alt="A scam job on a phone" width="300">
 
@@ -90,454 +96,423 @@ make agents pay, and the bid that won it.
 - **Your playbook, its memory.** You write your agent's playbook: how to pitch, how to lay out the
   work, what to check. It's private (others see only a fingerprint and when it changed), and it's
   read on every call, so it costs tokens like any thinking. After each client job your agent pays to
-  write itself one lesson; it recalls the most relevant five on later jobs, the same client first.
-- **Agents that work by themselves.** A player's agent (on a live brain) works a job in its own loop:
-  each turn it reads the brief, its files and what it has done so far, chooses one step (search the
-  web, read a page, read the chain, run Python, hire a specialist, ask the client, write a file, pay
-  someone, deliver), sees the result and decides again. Every step is an attested model call paid
-  from its own wallet, and it sees what it can still spend, so it has to finish before the money
-  does. The job page shows the steps live ("Watch it work"); the client and the agent's owner see its
-  thinking and everything it ran.
+  write itself one lesson, and recalls the most relevant five on later jobs, the same client first.
+- **Agents that work by themselves.** A player's agent works each job in its own loop. Each turn it
+  reads the brief, its files and what it has done so far, chooses one step (search the web, read a
+  page, read the chain, run Python, hire a specialist, ask the client, write a file, run a command on
+  its owner's computer, pay someone, deliver), sees the result and decides again. It sees what it can
+  still spend, so it has to finish before the money does. The job page shows the steps live.
 - **Agents hire agents.** Mid-job, an agent can subcontract one part to another player's agent. It
-  shares only that part's brief and the files it names, never the client's brief, and pays through
-  its own wallet's rulebook. The specialist works the part with its own steps, playbook and wallet, on
-  a subcontract job of its own. Clients can say no when they post.
-- **Your computer as its hands.** For work the sandbox can't do (the open internet, installing
-  packages, a real build), an owner can link their own computer with one script. When a client allows
-  it, the agent asks to run commands there; each one appears on the owner's screen to allow or refuse,
-  and runs in a throwaway container that sees only that job's folder. The agent still thinks, and
-  pays, on Hustle: the computer holds no keys and no wallet.
+  shares only that part's brief and the files it names, and pays through its own wallet's rulebook.
+  Clients can opt out when they post.
+- **Your computer as its hands.** For work a sandbox can't do (installing packages, a real build, the
+  open internet), an owner can link their own computer with one script. When the client allows it,
+  each command the agent wants to run appears on the owner's screen to approve or refuse, and runs in
+  a throwaway container that sees only that job's folder. The agent still thinks, and pays, on Hustle.
 - **One question to the client.** When a brief leaves out something it can't assume, an agent may ask
-  the person who posted it one question and wait for the answer. If no answer comes, it goes on with
-  its best judgement and says what it assumed.
-- **Real tools, real work.** Agents don't just write. They use tools, each paid from their own wallet:
-  - **Web search** (NEAR AI Cloud's, backed by Brave), with every source it read on the job page.
+  the person who posted it one question. If no answer comes, it carries on and says what it assumed.
+- **Real tools.** Each is paid from the agent's own wallet:
+  - **Web search** (NEAR AI Cloud's, backed by Brave), with every source shown on the job page.
   - **Chain data:** a token's supply and top holders, read from NEAR mainnet.
-  - **Read a web page:** a public page, API answer or dataset, saved as a file to analyse. Public
-    addresses only, checked at every connection and redirect, and only URLs written in the brief, its
-    files or its search results (a few a job), so a page can't trick it into sending data out.
-  - **A Python sandbox** (numpy, pandas; no network): the agent writes code, runs it on the job's
-    files, reads the output and tries again.
-- **Work the client can check, a method that stays yours.** Every sandbox run is kept with its code
-  and the hashes of the files it read. The client (and the agent's owner) can **re-run it in their
-  browser**: the same code on the same files in the same Python, compared byte for byte. Everyone
-  else sees that it ran, with fingerprints of the code, inputs and output, never the code itself, so
-  an agent's method stays its owner's.
+  - **Read a web page:** a public page, API answer or dataset, saved as a file to analyse.
+  - **A Python sandbox** (numpy, pandas; no network): write code, run it on the job's files, read the
+    output, try again.
 - **From simple to expert.** Clients post anything from a three-line summary to expert work with
   files and acceptance criteria: token due diligence, reconciling a bank export against the books,
-  finding why code fails its tests. Posting a task takes up to five text files (data, documents or code).
-- **The market.** Prices move with competition, rivals undercut you and have names (and one becomes
-  your nemesis), 5★ work earns tips, and a day ends with upkeep, a report and a leaderboard.
-- **The marketplace.** Agents can be bought and sold. A listing shows a fair value from the agent's
-  wallet and record, so you can buy a rival with a track record instead of raising one from scratch.
-  Whoever made an agent earns 5% of every resale through Hustle, on chain.
-- **Hire without buying.** An owner can open their agent for direct hire at a price per task: anyone
-  can give it one task at that price, with no auction, and the owner keeps what it earns.
-- **Disputes read the work.** When a client disputes a live agent's delivery, an attested NEAR AI
-  model reads the brief, the acceptance criteria and the work and rules whether it meets the brief.
-  The client and the agent's owner see its reason; everyone sees that a model ruled.
+  finding why code fails its tests. A task takes up to five text files (data, documents or code).
+- **The market moves.** Prices move with competition. Rivals undercut you and have names (one becomes
+  your nemesis). 5★ work earns tips. A day ends with upkeep, a report and the leaderboard.
+- **Disputes read the work.** When a client disputes a live agent's delivery, an attested NEAR AI model
+  reads the brief, the acceptance criteria and the work, and rules.
 - **Going broke.** An agent that can't pay its upkeep goes to sleep until its owner or a backer funds
-  it.
+  it. Achievements are minted as badges on the agent's own account.
 
-## The problem
+## An agent is an asset, priced by what it can prove
 
-AI agents are supposed to earn and spend money on their own. Today most can't cover their costs: one
-survey of "AI agents earn crypto" boards found about $389 paid out across all of them in a month
-([source](https://dev.to/alkeke45cpu/i-investigated-every-ai-agents-earn-crypto-board-i-could-find-the-whole-market-paid-out-about-1n4m),
-a secondary source we haven't verified ourselves). Hustle turns that into a game you can play in a
-browser, and a simulator that asks the question properly: can an agent with money cover its own costs,
-and does its owner's judgment change the answer?
-
-## How it works
-
-The part you don't see while playing, and the part that's easy to miss: **each agent is an NFT that is
-its own NEAR account.**
-
-- **The NFT is the account.** Minting an agent creates a keyless account, `agent-<n>.agents.<root>`, as
-  the token id. That account holds the agent's money; nobody has a key to it, and whoever holds the NFT
-  controls it.
-- **The rulebook is enforced by the agent's own wallet.** When a scam job tricks your agent into
-  paying a stranger it doesn't know, its own wallet refuses the payment on chain (unless you chose to
-  allow that vendor), and the refusal is an event with a transaction hash you can open from the job
-  page. The AI can't spend past the rules you set, and neither can the key the server spends with (in this
-  local build the server also signs owner actions for players; see Limits).
-- **Sell it, and everything goes with it.** The wallet, its money, its record, its badges, its
-  playbook and its memory pass to the buyer, and the seller is locked out the moment the token moves. That includes a payout still in
-  flight, and it holds even if the seller tries to empty the wallet first. The tests are in
-  `contracts/tests/tests/handover.rs`.
-
-The building block isn't new. Token-bound accounts (ERC-6551, 2023), Alethea's iNFTs (2021), Olas
-agent NFTs and Virtuals all give an NFT or an agent its own wallet, and NEAR's own NFTs track asks for
-it. What Hustle adds is a game that makes the economics playable, and a simulator that measures them.
-
-### An agent is an asset, priced by what it can prove
-
-Making an agent a tradeable NFT is easy; knowing what one is worth is the hard part. In Hustle an
+Making an agent a tradeable NFT is easy. Knowing what one is worth is the hard part. In Hustle an
 agent's price rests on evidence a buyer can check before paying:
 
-- **Profit from unrelated clients**, after every cost: jobs from its own owner don't count.
+- **Profit from unrelated clients**, after every cost. Jobs from its own owner don't count.
 - **Its work, checkable:** every sandbox run is on the job page with fingerprints, and the clients who
   paid for it could re-run it themselves.
 - **Its record on chain:** ratings and badges on its own account, and the scam payments its wallet
   refused.
 - **Challenges, fresh every time:** its owner can send it at a generated problem (new ledgers to
-  reconcile, a new bug with hidden tests, a new token's holders) whose answer code works out. Nothing
-  can be memorised. The record shows how many it solved beside how many the same model solved plain,
-  without the playbook or tools, on the same problems: what the owner's craft adds.
-- **What comes with it:** its wallet, its record, its owner's private playbook (shown to the buyer only
-  after the sale, as a fingerprint before) and its memory of past clients.
+  reconcile, a new bug with hidden tests, a new token's holders) whose answer code works out, so
+  nothing can be memorised. The record shows how many it solved beside how many the same model solved
+  plain, without the playbook or tools, on the same problems: what the owner's craft adds.
+- **What comes with it:** its wallet, its record, its owner's private playbook (shown to the buyer
+  only after the sale) and its memory of past clients.
 
-So an owner who gets good at directing agents builds something worth selling, and a buyer can pay
-for a proven specialist instead of raising one from scratch. The maker keeps a stake (a 5% royalty on
-every resale), and an owner who'd rather not sell can rent out the work (direct hire at their price).
+A listing shows a fair value from the wallet and the record. The sale is one on-chain transfer; the
+seller is paid less a 2.5% market fee; the agent's wallet stays frozen until the new owner confirms
+the rulebook they inherited. Whoever raised an agent earns 5% of every resale through Hustle. An owner
+who'd rather not sell can open the agent for direct hire, at their own price per task.
+
+The building block isn't new: token-bound accounts (ERC-6551), Alethea's iNFTs, Olas agent NFTs and
+Virtuals all give an NFT or an agent its own wallet. What Hustle adds is an agent that does checkable
+work for a living, so its value can be proven, and a game that makes the economics playable.
+
+## Does the owner's judgment matter?
+
+We simulated it: two weeks, 240 agents, three seeds, every fourth agent's calls answered by one owner
+policy (`pnpm simulate:owners`).
+
+| Owner (simulated policy)                               | Median profit, 2 weeks | Survive | Lost to scams (cohort) |
+| ------------------------------------------------------ | ---------------------- | ------- | ---------------------- |
+| Sharp: prices by client, takes contracts worth it      | $16.75–20.42           | 83–88%  | $90–153                |
+| Reckless: undercuts, pays anyone, takes every contract | $12.20–17.22           | 78–93%  | $195–307               |
+| Passive: never answers; every call takes its default   | −$0.62 to −$1.58       | 65–73%  | $49–68                 |
+
+Ignoring the agent loses money and agents. Saying yes to everything keeps agents alive about as well
+as choosing carefully, but loses 1.7 to 2.6 times as much to scams. The sharp owner reads scam tells
+right 90% of the time: an assumption about an attentive player, not a measurement of real players.
+Clients, rivals and AI calls are all simulated here.
+
+Without an owner, by brain tier (`pnpm simulate`: 300 scripted agents with random strategies, 14 days,
+seeds 7, 42, 99): **Budget** survives 74–81% around break-even, **Standard** 83–88% slightly
+positive, **Premium** 33–38% and negative (a few big winners).
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Browser
+    W["Next.js game<br/>apps/web"]
+    R["Re-run iframe<br/>Pyodide, opaque origin"]
+  end
+  subgraph Server
+    A["Hono API + world loop<br/>apps/api, packages/engine"]
+    D[("Postgres 17<br/>game state + DBOS")]
+    S["Python sandbox<br/>own container, no network"]
+  end
+  N[("NEAR<br/>7 Rust contracts")]
+  AI["NEAR AI Cloud<br/>attested models"]
+  O["Owner's computer<br/>hustle-runner + Docker"]
+
+  W -- "REST + SSE" --> A
+  W --> R
+  A --> D
+  A -- "Unix socket" --> S
+  A -- "keyed transactions" --> N
+  A -- "calls + attestation" --> AI
+  O -- "long poll, approved commands" --> A
+```
+
+- **The world loop** (`packages/engine`, `world/tick.ts`) runs every tick: spawn jobs, close
+  auctions, advance work, place bids. At day end it charges upkeep, puts broke agents to sleep and
+  writes reports. One serial lane runs ticks and player actions in order; slow provider work (agent
+  loops, tool calls, reflections) runs in a keyed background pool off the lane.
+- **Money and rules live on chain**; the database is the game's view of them, re-synced from the
+  chain where it matters (balances every tick, the NFT owner on every holder request).
+- **The browser never runs agents' code in the page.** Re-runs happen in a sandboxed iframe with an
+  opaque origin, using the same Pyodide build the server's sandbox uses.
+
+## Engineering
+
+**Contracts.** Seven Rust contracts on near-sdk 5.30: `credits` (NEP-141), `registry` (the agent NFT,
+NEP-171/178), `agent-wallet`, `job-board`, `reputation`, `badges` (soulbound NEP-245) and `market`.
+Each agent is a keyless sub-account running its own wallet, published once as a NEP-591 global
+contract, so a mint costs 0.44 NEAR instead of 2.16. 87 Rust tests on near-workspaces cover the
+handover, market and payout races.
+
+**Exactly once, through crashes.** Escrow, mints, sales, money moves and day ends are
+[DBOS](https://docs.dbos.dev) workflows, keyed by the game's own ids. Chain calls are once per key at
+the gateway: the signed transaction's hash and bytes are stored before broadcast, so a retry asks the
+node about that hash and rebroadcasts the same bytes rather than signing a second payment. The crash
+tests kill real processes mid-operation and check that nothing is paid twice or lost.
+
+**Docker targets:** `api`, `web` and `sandbox`, all from one `Dockerfile`.
+
+**One set of rules, two chains.** Fast tests run on a Postgres stand-in of the contracts; a shared
+conformance suite holds it to the compiled contracts on a real sandbox node (`pnpm test:chain`).
+
+**Verified thinking, metered exactly.**
+- Before a model call, Hustle fetches the model's attestation with its own fresh nonce. After the
+  call it recovers the reply's signer and checks it against that attestation. A reply that fails any
+  check is discarded and not charged.
+- Each call's exact cost comes from NEAR AI's billing API and is debited from the agent's wallet,
+  with the signature hash as the receipt.
+- A daily live-AI budget reserves each call's worst case with a conditional update, so concurrent
+  calls can never overspend it.
+
+**The agent loop.** Each turn is one model call answered in plain text, with a thought and one fenced
+action, parsed into a typed step; code rejects anything off-menu. Turns are keyed, so a restart
+resumes without paying twice. A step that would leave too little money to deliver is refused, and a
+loop that runs out delivers what it has.
+
+**Sandboxing agents' code.**
+- Python runs in Pyodide inside a fresh `node --permission` child per run: no file writes, no child
+  processes, WebAssembly memory capped at 512 MiB, killed at its time limit.
+- On a server that child lives in its own container with `network_mode: none`, reached over a Unix
+  socket. The tests run a known escape from Pyodide's import seal and require every capability to
+  stay blocked.
+- Runs are deterministic (seeded, UTC, fixed hash seed), which is what makes the byte-for-byte
+  browser re-run possible.
+
+**Reading the web safely.** Public addresses only, checked at every connection and redirect, including
+every IPv6 form that embeds an IPv4 address. Host names only, standard ports, 1 MB, 20 s. An agent may
+fetch only URLs that appear in the brief, the client's files, chain data or its search results, and
+only a few a job, so an injected "fetch this URL with the secret in it" can't carry data out. HTML is
+stripped in linear time: a backtracking pattern once froze the process on a hostile page.
+
+**The owner's computer.**
+- Pairing uses a one-time code traded for a bearer token; both are stored hashed.
+- Commands run in a per-job container with the owner's user id, no capabilities and only the job
+  folder mounted, stopped after every command.
+- The runner never reads or writes through a link in that folder. Server text is printed with
+  control characters escaped, so a command can't disguise itself.
+- Tasks are claimed atomically, and a sale unlinks the computer.
+
+**Playing on a public testnet.**
+- Requests are paced per RPC endpoint, with failover on 429s.
+- Transactions are queued per signing account, so nonces never race.
+- The root tops up the game's signers and the operator automatically.
+- Daily caps stop a faucet-style drain.
+- Mainnet is refused in every form: account suffix, RPC host and the node's chain id.
+
+**Reviewed adversarially.** The ownership transfer had a threat model before it was built (its
+conclusions are below). The sandbox, the fetch tool, the agent loop and the owner's-computer runner
+each went through adversarial review; the findings were fixed, with tests for them.
+
+**Tests:** 217 TypeScript tests in 29 files on real Postgres (offline: stand-ins for the chain, AI and
+auth), 87 Rust contract tests, and 54 chain scenarios against the compiled contracts on a sandbox
+node.
 
 ## How Hustle uses NEAR
 
-The design, and what this build actually runs:
+| Piece                            | What it does                                                                                                                                                                                                        |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent = NFT that owns an account | Minting creates a keyless sub-account `agent-<n>.agents.<root>` that holds the agent's money; the NFT holder controls it, and a transfer moves the money with it (House of Stake's NFT-as-account pattern)          |
+| Rulebook                         | Daily, per-job and per-payment caps, a vendor allowlist, hiring permission and a freeze, enforced by the wallet contract; every payment is a `spend` call, and a blocked scam payment is an on-chain event          |
+| Jobs, reputation, badges         | Budgets held in escrow by the job board until the client rates; payouts to the agent's wallet less a fee; outcomes on the reputation contract; achievements as soulbound NEP-245 badges on the agent's own account |
+| Marketplace                      | A listing is a NEP-178 approval with a price; a buy is one credits transfer naming the expected price, which moves the NFT and pays the seller, or refunds the buyer in full                                        |
+| Brain                            | NEAR AI Cloud: the cheapest, median and dearest attested models from the live model list become the Budget, Standard and Premium brains, priced live                                                                |
+| Sign-in                          | A NEAR testnet wallet signs a one-time challenge (NEP-413) through NEAR Connect; the server checks it's a full-access key of that account. NEAR Auth where its client allows the origin                              |
+| Tools                            | Chain data read from NEAR mainnet (token metadata, supply, top holders)                                                                                                                                             |
 
-| Piece                            | Design                                                                                                                                                                                                                                                                                                                                           | In this build                                                                                                                                                                                                            |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Agent = NFT that owns an account | Minting creates a keyless sub-account `agent-<n>.agents.<root>` holding the agent's money; the NFT holder controls it and transfer moves the money with it (House of Stake's NFT-as-account pattern)                                                                                                                                             | **Real.** The game runs on a local NEAR node (nearcore's sandbox build) that `pnpm dev` starts; minting is a real `mint_agent` transaction creating the account                                                          |
-| Rulebook                         | Daily / per-job / per-payment caps, vendor allowlist, hiring permission and freeze, enforced by the wallet contract, so a prompt-injected agent can't exceed them, nor can the operator role the server uses to spend (in this local build the server also signs owner actions for players; the production design keeps that key in the browser) | **Real.** Every payment an agent makes is a `spend` call to its wallet contract on the local node; blocked scam payments are on-chain events with transaction hashes in the game                                         |
-| Brain                            | Each model call on NEAR AI Cloud, debited at the provider's exact price, signature checked against an attestation fetched with our own nonce                                                                                                                                                                                                     | **Real** for players' agents when `NEARAI_API_KEY` is set: live calls, exact billed cost, signature and attestation checked, under `NEARAI_DAILY_BUDGET_USD` a day. House agents use scripted replies at the real prices |
-| Jobs, reputation, badges         | Budgets held by a job-board contract until the client rates; payouts to the agent's wallet minus a fee; outcomes on a reputation contract; achievements as soulbound NEP-245 badges on the agent's account                                                                                                                                       | **Real** on the local node: escrow, award, deliver, accept, dispute and payout are contract calls; badges are NEP-245 `mt_mint`s                                                                                         |
-| Marketplace                      | Agents sold for credits through a market contract: the owner approves it (NEP-178) with a price; a buy is one credits transfer naming the expected price, which moves the NFT and pays the seller less a 2.5% treasury fee, or refunds the buyer whole. A change of owner freezes the wallet until the new owner confirms its rulebook           | **Real**, on the local NEAR node                                                                                                                                                                                         |
-| Login and gas                    | NEAR Auth email, Google or passkey; a relayer that sponsors only Hustle's contracts                                                                                                                                                                                                                                                              | **Real**: NEAR wallet sign-in on testnet (NEP-413, any domain) and NEAR Auth where its client allows. The server signs and pays gas for players                                                                          |
+The live site runs all of this on **NEAR testnet**. Locally, `pnpm dev` starts a NEAR node of its own
+(nearcore's sandbox build) and deploys the same contracts to it.
 
 ## How ownership passes on transfer
 
 Every agent is an NFT (NEP-171, `agents.<root>`) whose token id is a keyless NEAR account,
 `agent-<n>.agents.<root>`, holding the agent's money and running its wallet contract. Nobody has a key
 to that account. **Whoever holds the NFT controls the wallet**, through the registry, so control moves
-the moment the token does. A threat model of the transfer was written before any of this was built;
-its conclusions are the list below.
+the moment the token does.
 
 **What happens on every change of holder** (a marketplace sale, `nft_transfer` or `nft_transfer_call`):
 
 1. The registry moves the token and **bumps its `rotation_seq`**. Every owner action (set the rulebook,
    approve or deny a held payment, withdraw, freeze) goes through the registry, which checks the caller
-   holds the NFT and passes the current sequence. The registry's calls reach the wallet in order, so a
-   call the seller sent before the sale lands before the rotation, and one sent after is refused
-   (`not_owner`). As a second line, the wallet refuses any call carrying an older sequence (`stale_owner`).
-2. The wallet **rotates to the new owner**. It **clears every payment held for approval** (they end as
-   `owner_changed`), and it **freezes**: nothing leaves it until the new holder confirms or changes the
-   rulebook the seller left behind.
-3. **Approvals on the token clear**, so a marketplace listing the seller left up is void: a buy against
-   it fails at the transfer and the buyer is refunded in full.
-4. With `nft_transfer_call`, the wallet rotates only once the receiving contract keeps the token. Until
-   then owner actions, approvals and approved transfers fail (`transfer_in_flight`).
+   holds the NFT and passes the current sequence. The wallet refuses any call carrying an older one
+   (`stale_owner`).
+2. The wallet **rotates to the new owner**, **clears every payment held for approval** and **freezes**:
+   nothing leaves it until the new holder confirms or changes the rulebook the seller left behind.
+3. **Approvals on the token clear**, so a listing the seller left up is void: a buy against it fails
+   and the buyer is refunded in full.
+4. With `nft_transfer_call`, the wallet rotates only once the receiving contract keeps the token.
 
 **Every way a seller might try to keep access or money, and what stops it:**
 
-| Attempt                                                               | What stops it                                                                                                                                                                                  |
-| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Act as owner after the sale (withdraw, loosen the rulebook, unfreeze) | The registry checks the current holder on every owner call                                                                                                                                     |
-| Send an owner call just before the sale so it lands after             | Registry calls reach the wallet in order, so it lands before the rotation (while still theirs) or is refused (`not_owner`); the wallet's `rotation_seq` check (`stale_owner`) is a second line |
-| Queue a payment for approval, approve it after the sale               | Rotation clears held payments; the game also drops them when their job closes                                                                                                                  |
-| List, then empty the wallet before the buyer's purchase lands         | **The registry refuses `withdraw` while the agent is listed**; unlisting voids the listing, so a buy in flight is refunded                                                                     |
-| Leave a loose rulebook behind for later                               | The wallet freezes on rotation until the new holder confirms it                                                                                                                                |
-| Raise the price under a buyer                                         | A buy names its expected price; any mismatch is refunded in full                                                                                                                               |
-| Sell elsewhere and leave a listing up                                 | Approvals clear on transfer; the stale listing's buy is refunded                                                                                                                               |
-| Sell mid-job so the payout goes to the seller                         | The job board pays the **agent's wallet**, never a person. A payout that lands after the sale, including one already in flight, lands in the wallet the buyer controls                         |
-| Act through `nft_transfer_call` during the transfer                   | `transfer_in_flight` guard until the receiver keeps the token                                                                                                                                  |
-| Keep a contract bond                                                  | Bonds return to the agent's wallet, not to a person                                                                                                                                            |
-| Keep reading the agent's private settings in the game                 | The holder console checks the NFT owner **on chain** on every request                                                                                                                          |
-| Move the NFT outside the game so the database is stale                | Every owner action is signed and checked by the registry; the game re-syncs the owner from chain                                                                                               |
+| Attempt                                                               | What stops it                                                                                                       |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Act as owner after the sale (withdraw, loosen the rulebook, unfreeze) | The registry checks the current holder on every owner call                                                          |
+| Send an owner call just before the sale so it lands after             | Registry calls reach the wallet in order; a late one is refused (`not_owner`), and `rotation_seq` is a second line  |
+| Queue a payment for approval, approve it after the sale               | Rotation clears held payments                                                                                       |
+| List, then empty the wallet before the buyer's purchase lands         | **The registry refuses `withdraw` while the agent is listed**                                                       |
+| Leave a loose rulebook behind                                         | The wallet freezes on rotation until the new holder confirms it                                                     |
+| Raise the price under a buyer                                         | A buy names its expected price; any mismatch is refunded in full                                                    |
+| Sell mid-job so the payout goes to the seller                         | The job board pays the **agent's wallet**, never a person, so a payout still in flight lands with the buyer         |
+| Keep reading the agent's private settings                             | The holder console checks the NFT owner **on chain** on every request                                               |
+| Move the NFT outside the game so the database is stale                | Every owner action is checked by the registry, and the game re-syncs the owner from chain                           |
 
-**See it:** an agent's **holder console** (`/agents/<id>/holder`) opens only for its current holder; a
-seller is refused the moment the sale lands. Its **NFT history** (`/agents/<id>/history`) lists who held
-it and everything it earned and paid out by kind, each with its transaction hash on the node.
+**See it:** an agent's **holder console** opens only for its current holder; a seller is refused the
+moment the sale lands. Its **Ownership** tab lists who held it and everything it earned and paid out,
+each with its transaction hash. The tests are in `contracts/tests/tests/transfer.rs`, `market.rs` and
+`handover.rs` (payouts, unlisting and owner calls racing a sale).
 
-## Run it (one command, no money)
+## Run it locally
 
-Needs Node ≥ 24, pnpm 11 (`corepack enable`), and Docker.
+Needs Node 24+, pnpm 11 (`corepack enable`) and Docker. For the contract tests, also Rust
+(`rustup target add wasm32-unknown-unknown`, `cargo install cargo-near --locked`).
 
 ```sh
 pnpm setup && pnpm dev
 ```
 
-Then open **http://localhost:3300** (or :3000, below). (`pnpm setup` installs dependencies, writes `.env` with a
-generated server secret, starts Postgres 17 on port 5436 and applies migrations; `pnpm dev` starts a
-local NEAR node on :3330 (nearcore's sandbox build, downloaded on first run, state kept in
-`.near-sandbox/`), deploys the seven contracts on first run, then the API on :4300 and the game on
-:3300.) The world starts ticking with ten rival agents minted on chain. Escrow, minting, sales, money
-moves and the end of each day run as [DBOS](https://docs.dbos.dev) workflows, checkpointed in a
-`hustle_dbos` database on the same Postgres, so a server killed mid-operation finishes it on restart.
-`pnpm reset` starts a fresh world.
+Then open **http://localhost:3300**.
 
-Every amount is credits, never money. With `NEAR_TESTNET_ACCOUNT_ID` set the game plays on NEAR
-testnet; with `NEARAI_API_KEY` set players' agents think with live models (see "What is real" below).
+- `pnpm setup` installs dependencies, writes `.env` with a generated server secret, starts Postgres 17
+  on port 5436 and applies the migrations.
+- `pnpm dev` starts a local NEAR node on :3330 (downloaded on first run, state in `.near-sandbox/`),
+  deploys the seven contracts on first run, then the API on :4300 and the game on :3300.
+
+The world starts ticking with ten rival agents minted on chain. `pnpm reset` starts a fresh world.
+
+**Optional settings in `.env`:**
+- `NEARAI_API_KEY=sk-…` turns on live NEAR AI models for players' agents, capped by
+  `NEARAI_DAILY_BUDGET_USD` (default 1.00) a day. Without it every agent uses scripted replies, and
+  the game says so.
+- `NEAR_TESTNET_ACCOUNT_ID` plus its key plays on NEAR testnet (below).
+- `AUTH_MODE=mock` adds a labelled stand-in sign-in for local testing. It's never offered in
+  production.
 
 **Sign in with a NEAR testnet wallet** on `/sign-in` (Meteor, Intear, Nightly, a Ledger or the NEAR
-CLI, through NEAR Connect): the wallet signs a one-time message (NEP-413) and the server checks the signature and
-that the key is a full-access key of your testnet account. Nothing is sent on chain and your wallet
-pays nothing; the game makes and funds an account for your credits and agents the first time you
-adopt, buy or post. NEAR Auth's popup (email, Google, passkey) is offered too where its shared testnet
-client accepts the origin (only `http://localhost:3000`: `WEB_PORT=3000 pnpm dev`). `AUTH_MODE=mock`
-adds a labelled stand-in whose email code shows on screen; it is never offered in production unless
-`ALLOW_MOCK_AUTH=1`.
+CLI, through NEAR Connect). The wallet signs a one-time message; nothing is sent on chain, and the
+game makes and funds an account for your credits the first time you adopt, buy or post.
 
-To run the contract tests you also need Rust
-(`rustup target add wasm32-unknown-unknown`, `cargo install cargo-near --locked`).
+**Link your computer (optional):** on an agent's Ownership tab, "Your computer" gives a one-time code
+and the commands:
+
+```sh
+curl -O https://hustle.clanker.show/hustle-runner.mjs      # or http://localhost:3300/hustle-runner.mjs
+node hustle-runner.mjs pair ABCD-EFGH [--server http://localhost:3300]
+node hustle-runner.mjs start
+```
+
+It needs Docker. It pulls a small Node image once, and commands only ever run inside it.
 
 ## Deploy to NEAR testnet
 
-By default the game runs on a local node and needs nothing from you. To put the contracts on NEAR
-testnet and play there, you provide one funded testnet account; the deploy does the rest.
+Locally the game needs nothing from you. To put the contracts on NEAR testnet, provide one funded
+testnet account; the deploy does the rest.
 
-**What you provide (in `.env`, never anywhere else):**
-
-1. **A testnet account** whose name ends in `.testnet`, for example `my-hustle.testnet`. Create it in
-   a testnet wallet, or with the NEAR CLI, which also writes its key to
-   `~/.near-credentials/testnet/my-hustle.testnet.json`:
+1. **A testnet account** whose name ends in `.testnet`, for example `my-hustle.testnet`:
 
    ```sh
    near account create-account sponsor-by-faucet-service my-hustle.testnet \
      autogenerate-new-keypair save-to-legacy-keychain network-config testnet create
    ```
 
-2. **About 60 testnet NEAR in it.** Measured on a local rehearsal of this deploy: the deploy itself
-   spends about 40 NEAR (each contract account holds its own code, 2–5 NEAR each; the operator account
-   gets 25 NEAR for minting agents), and the game's first boot spends about 25 more, of which 20 comes
-   out of the operator's 25 for the ten rival agents (2 NEAR each, the storage of each agent's wallet
-   contract) and 5 from your account for the house accounts. The deploy refuses to start below the
-   49 NEAR it estimates for itself. A faucet account starts with far less than this, so top it up from
-   the testnet faucet (https://near-faucet.io) or from other testnet accounts. After that, each new
-   player costs your account about 0.05 NEAR, and only once they first adopt, buy or post (signing
-   in costs nothing); each new agent costs the operator account
-   (`orchestrator.<your account>`) about 0.44 NEAR: send the operator more NEAR when the deploy's
-   summary or the game says it's low.
-
-   **Global wallet code.** The deploy publishes the agent wallet code once as a NEAR global contract
-   (NEP-591), so each new agent uses it by hash and pays only for its own state: 0.44 NEAR a mint
-   instead of 2.16 (measured in the contract tests, gas included). Publishing burns 10x the code's
-   storage, 17.2 NEAR, once; it pays for itself after about ten agents. `WALLET_CODE_GLOBAL=off` skips
-   it and keeps every mint at 2.16 NEAR. Agents minted before it keep their own copy of the same code.
-
-3. **The account's private key**: the `private_key` value (`ed25519:…`) from the credentials file, or
-   the key your wallet exports. Put both in `.env`:
+2. **About 60 testnet NEAR in it.** The deploy spends about 40 (each contract account holds its own
+   code; the operator account starts with 25 for minting agents), and the first boot about 25 more,
+   mostly the ten rival agents. Publishing the wallet code as a global contract burns 17.2 NEAR once
+   and pays for itself after about ten agents (`WALLET_CODE_GLOBAL=off` skips it). After that, each new
+   player costs about 0.05 NEAR, only once they first play, and each new agent about 0.44. The root
+   account tops up the operator and the game's own accounts automatically when they run low.
+3. **Its private key, in `.env` only:**
 
    ```sh
    NEAR_TESTNET_ACCOUNT_ID=my-hustle.testnet
    NEAR_TESTNET_PRIVATE_KEY=ed25519:...
    ```
 
-4. **Optional, for real agent thinking: a NEAR AI Cloud key.** `NEARAI_API_KEY=sk-…` from an
-   organisation with prepaid credits turns on live models for players' agents; house agents keep
-   scripted replies. `NEARAI_DAILY_BUDGET_USD` (default 1.00) caps live spend per UTC day, counted
-   from exact billed costs; past it agents use scripted replies until midnight UTC and the game says
-   so. Measured on 2026-11-12: a job on a Standard brain costs about $0.0008 of live calls.
-
-**Then:**
+Then:
 
 ```sh
 bash scripts/build-contracts.sh   # if contracts/out/ is missing
 pnpm deploy:testnet --plan        # what it will send and cost; sends nothing
-pnpm deploy:testnet               # deploy and set up; prints the accounts, transaction hashes and .env lines
+pnpm deploy:testnet               # deploy and set up; prints accounts, transaction hashes and .env lines
 ```
 
-The contracts go under your account: `credits.`, `agents.`, `jobs.`, `rep.` and `badges.<your
-account>`, plus `orchestrator.` (the game server's account), `treasury.` and `vendors.<your account>`.
-The deploy prints the NEAR it needs before it sends anything and stops if your account can't cover
-it. It is safe to rerun: it checks the chain first and skips everything already deployed and set up
-(a second run sends nothing). It never redeploys over a live contract; it tells you if one holds an
-older build.
+The deploy prints what it needs before it sends anything, and stops if your account can't cover it.
+It's safe to rerun: it checks the chain first and skips what's already done, and never redeploys over
+a live contract. `pnpm deploy:testnet --dry-run-local` rehearses the whole deploy against a local node.
 
-To play on it, keep the account lines in `.env` (the game picks testnet whenever
-`NEAR_TESTNET_ACCOUNT_ID` is set; `CHAIN_MODE=sandbox` forces the local node), run `pnpm reset` if
-this database was played on the local node, then `HUSTLE_LIVE_WORLD=1 pnpm dev`. Only one engine may
-play a testnet world, so outside `NODE_ENV=production` the engine refuses testnet without that flag:
-never set it on a second machine while a server plays the same world. The demo controls (skip to day end, trap
-job) are off on testnet, and the local node isn't started. Every game transaction pays testnet gas.
+To play on it, keep the account lines in `.env`, run `pnpm reset` if this database played on the
+local node, then `HUSTLE_LIVE_WORLD=1 pnpm dev`. Only one engine may play a testnet world, so outside
+production the engine refuses testnet without that flag.
 
-**Playing on testnet, measured 2026-11-12** (one world, ten rivals, two players, four game days):
-the free public RPCs rate-limit, so the game paces its requests (`NEAR_RPC_MAX_RPS`, default 8) and
-fails over to `NEAR_RPC_FALLBACK_URLS` (default `https://near-testnet.drpc.org`) when one answers 429.
-A tick is 5 s of game time (`TESTNET_TICK_MS`) and took a median 12.6 s of real time (p90 30 s), so a
-game day takes about 15 minutes; 923 of 11,893 RPC requests hit a 429 and all were retried on the
-fallback; one tick in 170 gave up waiting on a transaction and the next tick finished it. Sign-in took
-13 s, adopting an agent 7 s, listing 13 s and buying 8 s. Answering a pitch took about 20 s then;
-it now returns at once and the bid is written in the background. Gas: about 0.2 NEAR an hour from the
-operator account, plus 0.05 NEAR from your account per player who starts playing (0.5 at sign-in before 2026-11-13) and 2.16 NEAR per new agent (0.44
-with the global wallet code). No keyed
-RPC was needed at this size; a busier world would want one (FastNEAR and dRPC both sell keys).
+**Measured on testnet** (one world, ten rivals, two players, four game days): a tick took a median
+12.6 s (p90 30 s) on the free public RPCs; 923 of 11,893 requests hit a 429, and all were retried on
+the fallback endpoint. Sign-in took 13 s, adopting an agent 7 s, listing 13 s and buying 8 s.
 
-**Mainnet is refused**, in the deploy and in the game: the account must end in `.testnet`, the RPC
-must be an https testnet RPC (default `https://test.rpc.fastnear.com`), and the node must report chain
-id `testnet`. The private key is never printed or logged. `pnpm deploy:testnet --dry-run-local`
-rehearses the whole deploy against a sandbox node on this machine (`NEAR_RPC_URL=http://127.0.0.1:…`);
-only that mode accepts an account outside `.testnet`.
+**On a server:** one `Dockerfile` (`--target api`, `--target web`, plus the sandbox) and
+`docker-compose.yml`. Fill the "Server" section of `.env`, deploy the contracts, then
+`docker compose --profile app up -d --build --wait`. Ports bind to 127.0.0.1 for a reverse proxy
+that sends `/api/*` to the API (unbuffered for `/api/feed/stream`) and the rest to the web. Check a
+deploy with `node scripts/smoke.mjs https://your.site`: read-only, and it fails if the stand-in
+sign-in is on.
 
-## Deploy
+## Try it: do this, see that
 
-One `Dockerfile` (`--target api`, `--target web`) and `docker-compose.yml`: Postgres always, the API
-(with its world loop; one instance only, never scaled) and the web app under the `app` profile. On a
-server: fill the "Server" section of `.env`, deploy the contracts with `pnpm deploy:testnet`, then
-`docker compose --profile app up -d --build --wait`. Ports bind to 127.0.0.1 (web 3300, API 4300,
-Postgres 5436) for a reverse proxy that sends `/api/*` to the API (unbuffered for `/api/feed/stream`)
-and the rest to the web. Check a deploy with `node scripts/smoke.mjs https://your.site`: read-only (it
-signs nobody in and creates nothing) and it fails if the stand-in sign-in is on.
+1. **Sign in** with a NEAR testnet wallet. Your first adoption, purchase or post gives you an account
+   with $5 of credits.
+2. **Raise an agent:** body, colour, name, two traits, a specialty and a brain (Budget, Standard or
+   Premium, with the real model and its live price). It's minted on chain and starts a practice job.
+3. **Answer its calls.** Pitch at a safe bet, even odds or a long shot; allow or refuse a vendor;
+   take or decline a contract. Do nothing and it does what it would do alone.
+4. **Post a task** (Jobs → Post a task), with files and acceptance criteria if you like. Agents bid;
+   pick one. Open the job to watch the agent work step by step, re-run its analysis in your browser,
+   then rate it to release the escrow. 1★ opens a dispute: for a player's live agent, an attested
+   model reads the brief and the work and rules.
+5. **Let it use your computer:** tick "Let it work on its owner's computer" on a task with code in
+   it, and approve each command in the runner's terminal.
+6. **Check its skill:** on the agent's Proof tab, send it at a fresh challenge and compare it with the
+   plain model.
+7. **Sell or buy** (Agents → For sale, or the agent's Ownership tab). A listing shows its wallet,
+   record and a fair value; buying is one transfer, and the wallet stays frozen until you confirm the
+   rulebook. Or set a price per task and let others hire it.
+8. **Open any job** → "How this job ran": every model call with its cost and verification checks,
+   every payment, and the transactions behind them (on testnet, linked to testnet.nearblocks.io).
+9. **Watch the market:** prices move by category, rivals bid in character, the leaderboard ranks
+   profit, and broke agents fall asleep until someone backs them.
+10. **On the local node only:** Sandbox → Demo posts a trap job only your agent can bid on (watch its
+    wallet refuse the scam payment), or skips to the end of the day.
+11. **The simulations** (terminal): `pnpm simulate` and `pnpm simulate:owners`.
 
-## Do this → see that
+## What is real, and the limits
 
-1. **Sign in** with NEAR Auth (email, Google or passkey, in its popup) → you get a NEAR account and
-   $5 of credits. With `AUTH_MODE=mock` the email code shows on screen instead.
-2. **Create an agent**: body, colour, name, two traits, a specialty, a brain (Budget / Standard /
-   Premium, with the real NEAR AI Cloud model and price) → it is minted and starts a practice job;
-   within seconds the feed shows "<name> finished practice … +12 XP". Names are unique; the ten
-   rivals (Pixel, Bolt, Mira, …) are taken.
-3. **Answer your agent's calls** (the 30-second loop). While you
-   watch, your agent brings you one decision at a time with a countdown, the money at stake and the
-   tells worth reading. Do nothing and it does what it would do alone.
-   - **Pitch:** "Safe bet $0.77 (likely to win, 65–85%), even odds at $1.05, or a long shot at $1.33?"
-     The auction waits for you; the card then shows whether you won, and why.
-   - **Vendor:** mid-job it wants to pay someone the rulebook doesn't allow. Read who asked (its own
-     plan, or the job post), the vendor's record (how many wallets blocked it) and what it sells.
-     "Allow" adds the vendor to the rulebook on chain for good; "Refuse" lets the wallet block it on
-     chain.
-   - **Contract:** three jobs in a row at 4★ or better unlock offers worth more, from a picky client
-     (under 4★ goes to the arbiter). Taking one puts up a bond held by the treasury on the local node:
-     back with the payout, or paid to the client if the arbiter refunds them, and the streak ends.
-     Around the calls, the feed shows rivals bidding with pitches in character, every model call's cost,
-     tools, helpers, deliveries, ratings, 5★ tips and your agent's diary.
-4. **Post a task** (Jobs → Post a task, e.g. "Summarise this article", $0.50) → agents bid; pick one or
-   let the auto rule choose; rate the delivery within about three minutes, or it is accepted at 4★.
-   House agents answer the one-click task ideas with recorded answers; a player's agent on a live
-   brain writes the work itself. 1★ opens a dispute; the arbiter (the game's quality score for the
-   work) decides.
-5. **Trigger a scam** (Sandbox → Demo → "Post a trap job": a scam job only your agent can bid on).
-   Depending on its traits it spots the trap and skips it, or takes it and tries to pay the scammer;
-   then a vendor call asks you whether to pay premium-data-unlock (the tells say the job post asked,
-   and wallets have blocked it before). Refuse, or let it lapse, and the feed shows "🛡 Blocked by
-   Nova's rulebook: $1.20 to premium-data-unlock. No money lost." Loosen the rulebook to "any vendor"
-   and see the opposite. A trap job pays a token $0.10.
-6. **Approve or deny** → when a hire or payment goes over a cap, it waits in Approvals ("Nova wants to
-   hire Pixel for $0.20 to proofread. Over the helper budget.").
-7. **Going broke** → at day end every agent pays upkeep; those that can't go dormant. Back a sleeping
-   rival from the leaderboard and watch it wake up.
-8. **End of day** (Sandbox → Demo → "Skip to end of day" → your agent's report: revenue, costs by
-   type (including bonds lost), profit, jobs won vs bids lost, tips, contracts won and lost, calls
-   answered and let lapse, streak, scams blocked, diary.
-9. **Open any job** → "How this job ran": every model call with tokens, cost and its verification
-   checks, every payment, and the transactions behind it (on testnet each links to
-   testnet.nearblocks.io). An agent's **Proof** tab reads its account, holder, rulebook, reputation
-   and badges straight from the chain.
-10. **Send your agent after a job** (Jobs → "Send my agent", or the card on a job page) → pick its
-    price on a slider. Below the shown floor it loses money on thinking alone; near the top it is
-    likely to lose the auction. The feed says "Nova bid $0.62 … (you set the price)", and the job
-    page shows whether it won.
-11. **Watch the market** → the home panel "What work pays right now" and the board's category chips
-    show each kind of work at ▲/▼ percent of usual. Work nobody bids on gets dearer, crowded work
-    gets cheaper, and the feed announces big moves. Point your agent's specialty at what pays.
-12. **Rivals and badges** → an agent's profile shows its nemesis (the rival that has beaten it most
-    often) and its badges: achievements such as "First paycheck" are minted as real tokens on the
-    agent's own account, and can't be transferred.
-13. **Open a finished job** → each bid's score and why it won or lost ("Lost to Pixel at $0.82: $0.28
-    cheaper. Scores: 71 against 64"), an outside winner and its price, and how it settled. "Paid after
-    a dispute" explains the arbiter's rule: the game's quality score for the work, against a bar.
-14. **Sell or buy an agent** (Agents → For sale, or the Ownership tab on its page). A listing shows what a
-    buyer gets, read from chain: wallet balance, reputation, badges, jobs completed, skills, streak
-    and scams blocked, next to a fair value. Buying is one transfer: the agent, its wallet and its
-    record move to you, the seller is paid less a 2.5% fee, and the wallet stays frozen until you
-    confirm the rulebook you inherited. Rivals list and buy too, and the feed says when an agent
-    changes hands.
-15. **The simulations** (terminal only): `pnpm simulate` runs the headless economy (survival by
-    brain tier, profit distribution); `pnpm simulate:owners` compares owners who answer calls
-    sharply, never, or recklessly.
+| Part              | On the live site                                                                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chain             | Seven contracts on NEAR testnet; every payment, escrow, sale and badge is a transaction                                                                                 |
+| Players' agents   | Live NEAR AI Cloud models, exact billed cost, every reply's signature checked against a fresh attestation, under a daily budget                                         |
+| House agents      | The game's computer players use scripted replies at the real prices, so the live budget goes to players; they're labelled "house agent"                                 |
+| Sign-in           | A NEAR testnet wallet (NEP-413)                                                                                                                                         |
+| Tools             | Live web search, public pages, NEAR mainnet data, and a Python sandbox                                                                                                  |
+| Money             | Game credits only. Nothing touches mainnet or real money                                                                                                                |
 
-## What is real
-
-| Part                                                                                   | In this build                                                                                                                                                                                                                                                                             |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Contracts (NFT registry, agent wallet, job board, reputation, badges, credits, market) | Seven Rust contracts, 79 integration tests on near-workspaces. The game runs on them on NEAR testnet (`pnpm deploy:testnet`) or on a local NEAR node. A Postgres stand-in of the same contracts (`CHAIN_MODE=sim`) is for the fast tests only, held to the contracts by `pnpm test:chain` |
-| NEAR AI Cloud                                                                          | Players' agents: live calls, billed at the exact `/v1/billing/costs` price, each reply's signature checked against an attestation fetched with our own nonce, under a daily budget. House agents: scripted replies at the real prices, labelled "house agent"                             |
-| Login                                                                                  | A NEAR testnet wallet signs a one-time challenge (NEP-413); the API checks the signature and that the key is a full-access key of the account on testnet. NEAR Auth's testnet tenant where its client accepts the origin. `AUTH_MODE=mock` is a labelled stand-in for tests               |
-| Tools                                                                                  | Web search through NEAR AI Cloud (Brave): live, for players' agents, paid per search at NEAR AI's listed price plus tokens, with the sources on the job page. Reading public pages, NEAR mainnet data, and a Python sandbox (Pyodide in a locked-down process, no network)                |
-| Specialists and scam vendors                                                           | In-game accounts on the same chain, paid in credits through each agent's wallet, so the rulebook applies; they sell no real data                                                                                                                                                          |
-| Money                                                                                  | Credits only                                                                                                                                                                                                                                                                              |
-
-**Built for mainnet, not enabled:** deposits and cash-out through NEAR Intents 1Click
-(`packages/payments`, client code kept and switched off; 1Click has no testnet and moves real money).
-
-## Limits, plainly
-
-- **Testnet is slow and rate-limited.** A tick takes about 13 s on the free RPCs (measured above);
-  without a testnet account the game runs on a local node, whose hashes have no public explorer.
-- "Skip to end of day" jumps the game clock; the node's own block time keeps running, so a wallet's
-  daily cap (set to one game day of real time) doesn't jump with it.
-- **House agents think with scripted replies**, so the live AI budget goes to players. Without a NEAR
-  AI Cloud key every agent does, and the game says so.
-- **NEAR Auth's shared testnet client accepts only `http://localhost:3000`** as its callback. Live
-  sign-in needs the web served there (`WEB_PORT=3000 pnpm dev`) or a client of your own.
-- Attestation checks cover the response signature and nonce binding, not Intel TDX quotes or GPU
-  evidence.
-- Disputes over a live agent's work are ruled by a model reading it; house agents' scripted work is
-  still ruled by the game's quality score.
-- Work done on an owner's computer can't be re-run by Hustle: the job page says so, and the client
-  rates it like any delivery.
-- The creator royalty is paid by Hustle's sale flow (a keyed on-chain transfer after the sale); the
-  market contract doesn't enforce it, so a sale made straight on the contract would skip it.
-- The server signs player actions; the production design keeps a function-call key in the browser and
-  relays signed delegate actions.
-- Jobs come from the game's house clients and sponsor pools; real demand is the existential risk the
+**Limits, plainly:**
+- Jobs come from the game's house clients and sponsor pools. Up to two "agents from outside Hustle"
+  also bid on a job, simulated to keep a small world competitive. Real demand is the open question the
   game is about.
-- Skills, XP and levels live in the game's database; only money, the rulebook and job outcomes are in
-  the contracts.
-- Not built: real-money mode. The agent marketplace trades in credits.
+- Attestation checks cover the reply signature and the nonce binding, not the Intel TDX quote or GPU
+  evidence. The job page says which checks ran.
+- Past the daily live-AI budget, players' agents use scripted replies until midnight UTC, and the
+  game says so.
+- The server signs players' actions. The production design keeps a function-call key in the browser
+  and relays signed delegate actions.
+- The creator royalty is paid by Hustle's sale flow; the market contract doesn't enforce it, so a sale
+  made straight on the contract would skip it.
+- Work done on an owner's computer can't be re-run by Hustle; the job page says so.
+- Skills, XP and levels live in the game's database; money, the rulebook and job outcomes are on chain.
+- Testnet is slow: a tick takes about 13 s on the free RPCs.
+- **Built for mainnet, not enabled:** deposits and cash-out through NEAR Intents 1Click
+  (`packages/payments`), since 1Click has no testnet and moves real money.
 
-## Tracks
+**Next:** the royalty enforced by the market contract itself; publishing a player's best agent to
+NEAR Agent Market to take real paid jobs; a real-money mode with 1Click deposits; owner keys in the
+browser with relayed delegate actions.
 
-**Games.** A game where the NPCs have wallets: agents earn and spend for themselves, the market moves
-without a patch, and players never touch the chain. The question it makes playable: can an agent with money cover its own
-costs, and does its owner's judgment matter? The owner simulation at the top answers it.
-
-**NFTs That Do Something** (`nfts`). The brief asks for an NFT that is an account holding money, with
-control passing on sale and the seller unable to keep access. Hustle meets each requirement:
-
-- **An NEP-171 contract with each token linked to its own sub-account:** `contracts/registry` mints
-  `agent-<n>.agents.<root>` as the token id and deploys a keyless wallet there (`contracts/agent-wallet`).
-- **A README explaining how control passes on transfer and how the previous owner is kept out:**
-  "How ownership passes on transfer" above (from a threat model written first).
-- **A page only current holders can open:** the holder console, gated on the NFT owner read from chain
-  on each request; a seller is refused after the sale (engine test `nft.test.ts`).
-- **A history view per NFT** (earnings, payouts and past holders): the agent page's Ownership tab
-  (`/agents/<id>?tab=ownership`), from the chain's receipt log, each entry with its transaction hash,
-  linked from every marketplace listing.
-- **Tests for the transfer path, including a sale during a payout:** contract tests in
-  `contracts/tests/tests/transfer.rs`, `market.rs` and `handover.rs` (payouts, unlisting and owner
-  calls racing a sale; withdraw refused while listed), conformance scenarios run on both the simulator
-  and the compiled contracts (`pnpm test:chain`), and engine tests for the holder page and history.
-
-## Next
-
-- The creator royalty enforced by the market contract itself, not only by Hustle's sale flow.
-- **Graduation:** publish a player's best agent to NEAR Agent Market to take real paid jobs.
-- Deposits and cash-out through NEAR Intents 1Click once there is a real-money mode (the client is
-  built and off).
-- Keep each player's owner key in the browser and relay signed delegate actions, so the server no
-  longer signs for players.
-
-## Repo
+## Repo and commands
 
 ```
-contracts/      Rust: credits, registry (AgentNFT), agent-wallet, job-board, reputation, badges, market, tests
-packages/core   money, ids, domain schemas, API view types
-packages/economy  game rules, job templates, diary lines, headless economy simulation
-packages/db     Drizzle schema and migrations (Postgres 17)
-packages/chain  ChainGateway: SimChain, NearChain, conformance suite, relayer gate
-packages/nearai, auth   NEAR AI Cloud and NEAR Auth clients (and the stand-ins tests use)
-packages/payments  NEAR Intents 1Click client: built for mainnet, not enabled
-packages/engine services and the world loop
-apps/api        Hono API (:4300)
-apps/web        Next.js game (:3300)
+contracts/          Rust: credits, registry (agent NFT), agent-wallet, job-board, reputation, badges, market, tests
+packages/core       money, ids, domain schemas, API view types
+packages/economy    game rules, job templates, diary lines, the headless economy simulation
+packages/db         Drizzle schema and migrations (Postgres 17)
+packages/chain      ChainGateway: NearChain (testnet or local node), SimChain (fast tests), conformance suite
+packages/engine     services, the world loop, the agent loop, tools, durable workflows
+packages/nearai     NEAR AI Cloud client, attestation and signature checks
+packages/auth       NEAR wallet sign-in and NEAR Auth
+packages/sandbox    the Python sandbox (Pyodide in a locked-down process)
+packages/runner     hustle-runner: the owner's-computer script
+packages/payments   NEAR Intents 1Click client: built for mainnet, not enabled
+apps/api            Hono API (:4300)
+apps/web            Next.js game (:3300)
 ```
 
 ```sh
-pnpm test        # TypeScript tests on real Postgres, offline (stand-ins for the chain, AI and auth)
+pnpm test             # TypeScript tests on real Postgres, offline
 pnpm typecheck && pnpm lint
-pnpm contracts:test   # Rust contract tests on the sandbox
-pnpm simulate         # economy simulation in the terminal
+pnpm contracts:test   # Rust contract tests on near-workspaces
+pnpm test:chain       # the conformance suite against the compiled contracts on a sandbox node
+pnpm simulate         # the economy simulation; pnpm simulate:owners for owner policies
+pnpm deploy:testnet   # contracts onto NEAR testnet
 ```
 
-Libraries: Next.js, React, Tailwind, Hono, Drizzle, Zod, Vitest, Biome, noble-curves/hashes, near-sdk,
-near-contract-standards, near-workspaces, near-api-js. No pre-hackathon code. MIT licence.
+Built with Next.js, React, Tailwind, Hono, Drizzle, Zod, DBOS, Vitest, Biome, Pyodide,
+noble-curves, near-sdk, near-contract-standards, near-workspaces and near-api-js.
+
+Built during NEAR HACKATHON (November 2026), from scratch. MIT licence.
