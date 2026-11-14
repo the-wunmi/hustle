@@ -18,10 +18,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ file: st
     return new Response(agentCardSvg(agent), {
       headers: { 'content-type': 'image/svg+xml; charset=utf-8', 'cache-control': CACHE },
     });
-  const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? 'localhost:3300';
-  const proto =
-    req.headers.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
-  return Response.json(agentCardJson(agent, `${proto}://${host}`), {
+  // Links come from the configured public URL, never from request headers a client can set.
+  const origin = (process.env.PUBLIC_ORIGIN || new URL(req.url).origin).replace(/\/$/, '');
+  return Response.json(agentCardJson(agent, origin), {
     headers: { 'cache-control': CACHE, 'access-control-allow-origin': '*' },
   });
 }

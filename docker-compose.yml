@@ -118,6 +118,8 @@ services:
     # Nothing secret: the web server only proxies /api to the API.
     environment:
       HUSTLE_API_ORIGIN: http://api:4300
+      # The public URL, for the absolute links in an agent NFT's attributes.
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
     tmpfs:
       - /app/apps/web/.next/cache
       - /tmp

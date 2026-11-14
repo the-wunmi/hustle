@@ -177,6 +177,7 @@ for (const agent of picked.slice(0, 4)) {
       continue;
     }
     if (token.owner_id === proof.holder) pass(`${label} is an NFT held by ${proof.holder}`);
+    else fail(`${label} holder`, `game says ${proof.holder}, chain says ${token.owner_id}`);
     const media = token.metadata?.media;
     if (media && agent === picked[0]) {
       const img = await fetch(media, { signal: AbortSignal.timeout(20_000) });
@@ -190,7 +191,6 @@ for (const agent of picked.slice(0, 4)) {
         `${agent.name}'s NFT image`,
         'the registry has no base URI set, so wallets show no image',
       );
-    else fail(`${label} holder`, `game says ${proof.holder}, chain says ${token.owner_id}`);
 
     const wallet = await view(agent.accountId, 'get_wallet');
     const rb = wallet?.rulebook ?? {};
@@ -283,10 +283,10 @@ try {
 
 section("A scam payment refused by the agent's wallet");
 try {
-  const recent = await api('/jobs?status=all&limit=300');
+  const recent = await api('/jobs?status=recent&limit=300');
   const list = Array.isArray(recent) ? recent : (recent.jobs ?? []);
   let shown = false;
-  for (const j of list.filter((x) => x.wasScam).slice(0, 15)) {
+  for (const j of list.filter((x) => x.wasScam).slice(0, 40)) {
     const job = await api(`/jobs/${j.id}`);
     const blocked = job.spends.find((s) => s.status === 'blocked' && s.txHash);
     if (!blocked) continue;
